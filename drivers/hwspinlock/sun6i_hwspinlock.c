@@ -96,7 +96,7 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
 	u32 num_banks;
 	int err, i;
 
-	io_base = devm_platform_ioremap_resource(pdev, SPINLOCK_BASE_ID);
+	io_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(io_base))
 		return PTR_ERR(io_base);
 
@@ -104,14 +104,12 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
-	priv->ahb_clk = devm_clk_get(&pdev->dev, "ahb");
-	if (IS_ERR(priv->ahb_clk)) {
-		err = PTR_ERR(priv->ahb_clk);
-		dev_err(&pdev->dev, "unable to get AHB clock (%d)\n", err);
-		return err;
-	}
+	priv->ahb_clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(priv->ahb_clk))
+		return dev_err_probe(&pdev->dev, PTR_ERR(priv->ahb_clk),
+				     "unable to get AHB clock\n");
 
-	priv->reset = devm_reset_control_get(&pdev->dev, "ahb");
+	priv->reset = devm_reset_control_get(&pdev->dev, NULL);
 	if (IS_ERR(priv->reset))
 		return dev_err_probe(&pdev->dev, PTR_ERR(priv->reset),
 				     "unable to get reset control\n");
@@ -129,22 +127,16 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * bit 28 and 29 represents the hwspinlock setup
-	 *
-	 * every datasheet (A64, A80, A83T, H3, H5, H6 ...) says the default value is 0x1 and 0x1
-	 * to 0x4 represent 32, 64, 128 and 256 locks
-	 * but later datasheets (H5, H6) say 00, 01, 10, 11 represent 32, 64, 128 and 256 locks,
-	 * but that would mean H5 and H6 have 64 locks, while their datasheets talk about 32 locks
-	 * all the time, not a single mentioning of 64 locks
-	 * the 0x4 value is also not representable by 2 bits alone, so some datasheets are not
-	 * correct
-	 * one thing have all in common, default value of the sysstatus register is 0x10000000,
-	 * which results in bit 28 being set
-	 * this is the reason 0x1 is considered being 32 locks and bit 30 is taken into account
-	 * verified on H2+ (datasheet 0x1 = 32 locks) and H5 (datasheet 01 = 64 locks)
+	 * Bits 28 and 29 represent the hwspinlock setup.
+	 * 0x0 == 0x4 -> 256 spinlocks.
+	 * All known hardware has 0x1 -> 32 spinlocks.
+	 * The H5 and H6 datasheets incorrectly list the values off by one.
 	 */
 	num_banks = readl(io_base + SPINLOCK_SYSSTATUS_REG) >> 28;
 	switch (num_banks) {
+	case 0:
+		num_banks = 4;
+		fallthrough;
 	case 1 ... 4:
 		priv->nlocks = 1 << (4 + num_banks);
 		break;
@@ -168,13 +160,11 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
 
 	/* failure of debugfs is considered non-fatal */
 	sun6i_hwspinlock_debugfs_init(priv);
-	if (IS_ERR(priv->debugfs))
-		priv->debugfs = NULL;
 
 	err = devm_add_action_or_reset(&pdev->dev, sun6i_hwspinlock_disable, priv);
 	if (err) {
 		dev_err(&pdev->dev, "failed to add hwspinlock disable action\n");
-		goto bank_fail;
+		goto action_fail;
 	}
 
 	platform_set_drvdata(pdev, priv);
@@ -182,6 +172,8 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
 	return devm_hwspin_lock_register(&pdev->dev, priv->bank, &sun6i_hwspinlock_ops,
 					 SPINLOCK_BASE_ID, priv->nlocks);
 
+action_fail:
+	debugfs_remove_recursive(priv->debugfs);
 bank_fail:
 	clk_disable_unprepare(priv->ahb_clk);
 clk_fail:
