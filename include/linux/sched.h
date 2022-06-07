@@ -1254,6 +1254,7 @@ struct task_struct {
 	/* Protected by alloc_lock: */
 	struct mempolicy		*mempolicy;
 	short				il_prev;
+	short				il_count;
 	short				pref_node_fork;
 #endif
 #ifdef CONFIG_NUMA_BALANCING
