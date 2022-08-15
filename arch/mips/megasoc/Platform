@@ -1,3 +1,6 @@
 platform-$(CONFIG_MACH_MEGASOC)	+= megasoc/
+platform-$(CONFIG_MACH_MEGASOC_CDIM)	+= megasoc/
 cflags-$(CONFIG_MACH_MEGASOC)	+= -I$(srctree)/arch/mips/include/asm/mach-megasoc -mno-branch-likely
+cflags-$(CONFIG_MACH_MEGASOC_CDIM)	+= -I$(srctree)/arch/mips/include/asm/mach-megasoc -mno-branch-likely
 load-$(CONFIG_MACH_MEGASOC)	+= 0xffffffff80100000
+load-$(CONFIG_MACH_MEGASOC_CDIM)	+= 0xffffffff80100000
