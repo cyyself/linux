@@ -6,7 +6,7 @@
 
 void prom_putchar(char c)
 {
-    while( (readl((uint8_t *)(EARLY_PRINTK_UART_BASE + 0x5)) & 0x40) == 0 );
+    while( (readb((uint8_t *)(EARLY_PRINTK_UART_BASE + 0x5)) & 0x40) == 0 );
     TRIVIALMIPS_UART_OUTB(0x00, c & 0xFF);
 }
 
