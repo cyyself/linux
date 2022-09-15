@@ -3,7 +3,7 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 
 / {
-	compatible = "MegaSoC,CDIM";
+	compatible = "cqu,CQU_Dual_Issue_Machine";
 	#address-cells = <1>;
 	#size-cells = <1>;
 
@@ -21,26 +21,20 @@
 		cpu@0 {
 			device_type = "cpu";
 			compatible = "mips,4Kc";
-			clocks = <&ext>;
+			clocks = <&cpuclk>;
 			reg = <0>;
 		};
 	};
 
-	ext: ext {
+	cpuclk: cpuclk {
 		compatible = "fixed-clock";
 		clock-frequency = <66666666>;
 		#clock-cells = <0>;
 	};
 
-	utmiclk: utmiclk {
-		compatible = "fixed-clock";
-		clock-frequency = <60000000>;
-		#clock-cells = <0>;
-	};
-
 	socclk: socclk {
 		compatible = "fixed-clock";
-		clock-frequency = <166666666>;
+		clock-frequency = <66666666>;
 		#clock-cells = <0>;
 	};
 
@@ -71,7 +65,7 @@
 			interrupts = <2>;
 			reg = <0x1fb00000 0x1000>;
 			xlnx,kind-of-intr = <0x1>;
-			xlnx,num-intr-inputs = <0x8>;
+			xlnx,num-intr-inputs = <0x2>;
 		};
 
 		serial0: serial@1fe40000 {
@@ -83,8 +77,8 @@
 			reg-shift = <0>;
 			current-speed = <230400>;
 			clocks = <&socclk>;
-			interrupt-parent = <&axi_intc_0>;
-			interrupts = <2>;
+			interrupt-parent = <&cpuintc>;
+			interrupts = <3>;
 		};
 
 		axi_ethernetlite: ethernet@1ff00000 {
