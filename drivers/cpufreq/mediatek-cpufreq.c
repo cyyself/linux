@@ -8,13 +8,14 @@
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/cpumask.h>
-#include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/pm_opp.h>
 #include <linux/regulator/consumer.h>
+
+#define VOLT_TOL		(10000)
 
 struct mtk_cpufreq_platform_data {
 	int min_volt_shift;
@@ -55,7 +56,6 @@ struct mtk_cpu_dvfs_info {
 	unsigned int opp_cpu;
 	unsigned long current_freq;
 	const struct mtk_cpufreq_platform_data *soc_data;
-	int vtrack_max;
 	bool ccifreq_bound;
 };
 
@@ -82,7 +82,6 @@ static int mtk_cpufreq_voltage_tracking(struct mtk_cpu_dvfs_info *info,
 	struct regulator *proc_reg = info->proc_reg;
 	struct regulator *sram_reg = info->sram_reg;
 	int pre_vproc, pre_vsram, new_vsram, vsram, vproc, ret;
-	int retry = info->vtrack_max;
 
 	pre_vproc = regulator_get_voltage(proc_reg);
 	if (pre_vproc < 0) {
@@ -90,44 +89,91 @@ static int mtk_cpufreq_voltage_tracking(struct mtk_cpu_dvfs_info *info,
 			"invalid Vproc value: %d\n", pre_vproc);
 		return pre_vproc;
 	}
+	/* Vsram should not exceed the maximum allowed voltage of SoC. */
+	new_vsram = min(new_vproc + soc_data->min_volt_shift,
+			soc_data->sram_max_volt);
 
-	pre_vsram = regulator_get_voltage(sram_reg);
-	if (pre_vsram < 0) {
-		dev_err(info->cpu_dev, "invalid Vsram value: %d\n", pre_vsram);
-		return pre_vsram;
-	}
+	if (pre_vproc < new_vproc) {
+		/*
+		 * When scaling up voltages, Vsram and Vproc scale up step
+		 * by step. At each step, set Vsram to (Vproc + 200mV) first,
+		 * then set Vproc to (Vsram - 100mV).
+		 * Keep doing it until Vsram and Vproc hit target voltages.
+		 */
+		do {
+			pre_vsram = regulator_get_voltage(sram_reg);
+			if (pre_vsram < 0) {
+				dev_err(info->cpu_dev,
+					"invalid Vsram value: %d\n", pre_vsram);
+				return pre_vsram;
+			}
+			pre_vproc = regulator_get_voltage(proc_reg);
+			if (pre_vproc < 0) {
+				dev_err(info->cpu_dev,
+					"invalid Vproc value: %d\n", pre_vproc);
+				return pre_vproc;
+			}
 
-	new_vsram = clamp(new_vproc + soc_data->min_volt_shift,
-			  soc_data->sram_min_volt, soc_data->sram_max_volt);
+			vsram = min(new_vsram,
+				    pre_vproc + soc_data->min_volt_shift);
 
-	do {
-		if (pre_vproc <= new_vproc) {
-			vsram = clamp(pre_vproc + soc_data->max_volt_shift,
-				      soc_data->sram_min_volt, new_vsram);
-			ret = regulator_set_voltage(sram_reg, vsram,
-						    soc_data->sram_max_volt);
+			if (vsram + VOLT_TOL >= soc_data->sram_max_volt) {
+				vsram = soc_data->sram_max_volt;
 
+				/*
+				 * If the target Vsram hits the maximum voltage,
+				 * try to set the exact voltage value first.
+				 */
+				ret = regulator_set_voltage(sram_reg, vsram,
+							    vsram);
+				if (ret)
+					ret = regulator_set_voltage(sram_reg,
+							vsram - VOLT_TOL,
+							vsram);
+
+				vproc = new_vproc;
+			} else {
+				ret = regulator_set_voltage(sram_reg, vsram,
+							    vsram + VOLT_TOL);
+
+				vproc = vsram - soc_data->min_volt_shift;
+			}
 			if (ret)
 				return ret;
 
-			if (vsram == soc_data->sram_max_volt ||
-			    new_vsram == soc_data->sram_min_volt)
-				vproc = new_vproc;
-			else
-				vproc = vsram - soc_data->min_volt_shift;
-
 			ret = regulator_set_voltage(proc_reg, vproc,
-						    soc_data->proc_max_volt);
+						    vproc + VOLT_TOL);
 			if (ret) {
 				regulator_set_voltage(sram_reg, pre_vsram,
-						      soc_data->sram_max_volt);
+						      pre_vsram);
 				return ret;
 			}
-		} else if (pre_vproc > new_vproc) {
+		} while (vproc < new_vproc || vsram < new_vsram);
+	} else if (pre_vproc > new_vproc) {
+		/*
+		 * When scaling down voltages, Vsram and Vproc scale down step
+		 * by step. At each step, set Vproc to (Vsram - 200mV) first,
+		 * then set Vproc to (Vproc + 100mV).
+		 * Keep doing it until Vsram and Vproc hit target voltages.
+		 */
+		do {
+			pre_vproc = regulator_get_voltage(proc_reg);
+			if (pre_vproc < 0) {
+				dev_err(info->cpu_dev,
+					"invalid Vproc value: %d\n", pre_vproc);
+				return pre_vproc;
+			}
+			pre_vsram = regulator_get_voltage(sram_reg);
+			if (pre_vsram < 0) {
+				dev_err(info->cpu_dev,
+					"invalid Vsram value: %d\n", pre_vsram);
+				return pre_vsram;
+			}
+
 			vproc = max(new_vproc,
 				    pre_vsram - soc_data->max_volt_shift);
 			ret = regulator_set_voltage(proc_reg, vproc,
-						    soc_data->proc_max_volt);
+						    vproc + VOLT_TOL);
 			if (ret)
 				return ret;
 
@@ -137,24 +183,32 @@ static int mtk_cpufreq_voltage_tracking(struct mtk_cpu_dvfs_info *info,
 				vsram = max(new_vsram,
 					    vproc + soc_data->min_volt_shift);
 
-			ret = regulator_set_voltage(sram_reg, vsram,
-						    soc_data->sram_max_volt);
+			if (vsram + VOLT_TOL >= soc_data->sram_max_volt) {
+				vsram = soc_data->sram_max_volt;
+
+				/*
+				 * If the target Vsram hits the maximum voltage,
+				 * try to set the exact voltage value first.
+				 */
+				ret = regulator_set_voltage(sram_reg, vsram,
+							    vsram);
+				if (ret)
+					ret = regulator_set_voltage(sram_reg,
+							vsram - VOLT_TOL,
+							vsram);
+			} else {
+				ret = regulator_set_voltage(sram_reg, vsram,
+							    vsram + VOLT_TOL);
+			}
+
 			if (ret) {
 				regulator_set_voltage(proc_reg, pre_vproc,
-						      soc_data->proc_max_volt);
+						      pre_vproc);
 				return ret;
 			}
-		}
-
-		pre_vproc = vproc;
-		pre_vsram = vsram;
-
-		if (--retry < 0) {
-			dev_err(info->cpu_dev,
-				"over loop count, failed to set voltage\n");
-			return -EINVAL;
-		}
-	} while (vproc != new_vproc || vsram != new_vsram);
+		} while (vproc > new_vproc + VOLT_TOL ||
+			 vsram > new_vsram + VOLT_TOL);
+	}
 
 	return 0;
 }
@@ -250,8 +304,8 @@ static int mtk_cpufreq_set_target(struct cpufreq_policy *policy,
 	 * If the new voltage or the intermediate voltage is higher than the
 	 * current voltage, scale up voltage first.
 	 */
-	target_vproc = max(inter_vproc, vproc);
-	if (pre_vproc <= target_vproc) {
+	target_vproc = (inter_vproc > vproc) ? inter_vproc : vproc;
+	if (pre_vproc < target_vproc) {
 		ret = mtk_cpufreq_set_voltage(info, target_vproc);
 		if (ret) {
 			dev_err(cpu_dev,
@@ -512,15 +566,6 @@ static int mtk_cpu_dvfs_info_init(struct mtk_cpu_dvfs_info *info, int cpu)
 	 * for this CPU power domain.
 	 */
 	info->need_voltage_tracking = (info->sram_reg != NULL);
-
-	/*
-	 * We assume min voltage is 0 and tracking target voltage using
-	 * min_volt_shift for each iteration.
-	 * The vtrack_max is 3 times of expeted iteration count.
-	 */
-	info->vtrack_max = 3 * DIV_ROUND_UP(max(info->soc_data->sram_max_volt,
-						info->soc_data->proc_max_volt),
-					    info->soc_data->min_volt_shift);
 
 	return 0;
 
