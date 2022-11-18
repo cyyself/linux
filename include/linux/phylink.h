@@ -124,6 +124,12 @@ enum phylink_op_type {
  *		      if MAC link is at %MLO_AN_FIXED mode.
  * @mac_managed_pm: if true, indicate the MAC driver is responsible for PHY PM.
  * @ovr_an_inband: if true, override PCS to MLO_AN_INBAND
+ * @sync_an_inband: if true, select between %MLO_AN_INBAND and %MLO_AN_PHY
+ *		    according to the capability of the attached on-board PHY
+ *		    (if both modes are supported, the mode deduced from the
+ *		    fwnode specification is used). With PHYs on SFP modules,
+ *		    the automatic selection takes place regardless of this
+ *		    setting. Mutually exclusive with &ovr_an_inband.
  * @get_fixed_state: callback to execute to determine the fixed link state,
  *		     if MAC link is at %MLO_AN_FIXED mode.
  * @supported_interfaces: bitmap describing which PHY_INTERFACE_MODE_xxx
@@ -137,6 +143,7 @@ struct phylink_config {
 	bool poll_fixed_state;
 	bool mac_managed_pm;
 	bool ovr_an_inband;
+	bool sync_an_inband;
 	void (*get_fixed_state)(struct phylink_config *config,
 				struct phylink_link_state *state);
 	DECLARE_PHY_INTERFACE_MASK(supported_interfaces);

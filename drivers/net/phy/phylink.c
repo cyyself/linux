@@ -157,6 +157,45 @@ static const char *phylink_an_mode_str(unsigned int mode)
 }
 
 /**
+ * phylink_sync_an_inband() - Sync in-band autoneg between PCS and PHY
+ * @pl: a pointer to a &struct phylink returned from phylink_create()
+ * @phy: a pointer to a &struct phy_device
+ *
+ * Query the in-band autoneg capability of an on-board PHY in an attempt to
+ * sync the PCS-side link autoneg mode with the PHY autoneg mode. Set the
+ * current link autoneg mode to the mode configured through the fwnode if the
+ * PHY supports it or if its capabilities are unknown, or to an alternative
+ * mode that the PHY can operate in.
+ */
+static void phylink_sync_an_inband(struct phylink *pl, struct phy_device *phy)
+{
+	unsigned int mode = pl->cfg_link_an_mode;
+	int ret;
+
+	if (!pl->config->sync_an_inband)
+		return;
+
+	ret = phy_validate_an_inband(phy, pl->link_config.interface);
+	if (ret == PHY_AN_INBAND_UNKNOWN) {
+		phylink_dbg(pl,
+			    "PHY driver does not report in-band autoneg capability, assuming %s\n",
+			    phylink_autoneg_inband(mode) ? "true" : "false");
+	} else if (phylink_autoneg_inband(mode) && !(ret & PHY_AN_INBAND_ON)) {
+		phylink_err(pl,
+			    "Requested in-band autoneg but driver does not support this, disabling it.\n");
+
+		mode = MLO_AN_PHY;
+	} else if (!phylink_autoneg_inband(mode) && !(ret & PHY_AN_INBAND_OFF)) {
+		phylink_dbg(pl,
+			    "PHY driver requests in-band autoneg, force-enabling it.\n");
+
+		mode = MLO_AN_INBAND;
+	}
+
+	pl->cur_link_an_mode = mode;
+}
+
+/**
  * phylink_interface_max_speed() - get the maximum speed of a phy interface
  * @interface: phy interface mode defined by &typedef phy_interface_t
  *
@@ -1490,6 +1529,12 @@ struct phylink *phylink_create(struct phylink_config *config,
 	struct phylink *pl;
 	int ret;
 
+	if (config->ovr_an_inband && config->sync_an_inband) {
+		dev_err(config->dev,
+			"phylink: error: ovr_an_inband and sync_an_inband cannot be used simultaneously\n");
+		return ERR_PTR(-EINVAL);
+	}
+
 	if (mac_ops->mac_select_pcs &&
 	    mac_ops->mac_select_pcs(config, PHY_INTERFACE_MODE_NA) !=
 	      ERR_PTR(-EOPNOTSUPP))
@@ -1750,6 +1795,8 @@ int phylink_connect_phy(struct phylink *pl, struct phy_device *phy)
 		pl->link_config.interface = pl->link_interface;
 	}
 
+	phylink_sync_an_inband(pl, phy);
+
 	ret = phylink_attach_phy(pl, phy, pl->link_interface);
 	if (ret < 0)
 		return ret;
@@ -1824,6 +1871,8 @@ int phylink_fwnode_phy_connect(struct phylink *pl,
 		pl->link_interface = phy_dev->interface;
 		pl->link_config.interface = pl->link_interface;
 	}
+
+	phylink_sync_an_inband(pl, phy_dev);
 
 	ret = phy_attach_direct(pl->netdev, phy_dev, flags,
 				pl->link_interface);
