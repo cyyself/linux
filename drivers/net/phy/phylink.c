@@ -1716,6 +1716,18 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy,
 		return ret;
 	}
 
+	if (pl->config->sync_an_inband && !phy_on_sfp(phy)) {
+		bool use_inband = phylink_autoneg_inband(pl->cur_link_an_mode);
+
+		ret = phy_config_an_inband(phy, interface, use_inband);
+		if (ret && ret != -EOPNOTSUPP) {
+			phylink_err(pl,
+				    "failed to configure PHY in-band autoneg: %pe\n",
+				    ERR_PTR(ret));
+			return ret;
+		}
+	}
+
 	phy->phylink = pl;
 	phy->phy_link_change = phylink_phy_change;
 

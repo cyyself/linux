@@ -951,6 +951,32 @@ int phy_validate_an_inband(struct phy_device *phydev,
 EXPORT_SYMBOL_GPL(phy_validate_an_inband);
 
 /**
+ * phy_config_an_inband - modify in-band autoneg setting
+ * @phydev: the phy_device struct
+ * @interface: the MAC-side interface type
+ * @enabled: selects whether in-band autoneg is used or not
+ *
+ * Configures the PHY to enable or disable in-band autoneg for the given
+ * interface type. @enabled can be passed as true only if the bit mask returned
+ * by @phy_validate_an_inband() contains @PHY_AN_INBAND_ON, and false only if
+ * it contains @PHY_AN_INBAND_OFF.
+ *
+ * Returns 0 on success, negative error otherwise.
+ */
+int phy_config_an_inband(struct phy_device *phydev, phy_interface_t interface,
+			 bool enabled)
+{
+	if (!phydev->drv)
+		return -EIO;
+
+	if (!phydev->drv->config_an_inband)
+		return -EOPNOTSUPP;
+
+	return phydev->drv->config_an_inband(phydev, interface, enabled);
+}
+EXPORT_SYMBOL_GPL(phy_config_an_inband);
+
+/**
  * _phy_start_aneg - start auto-negotiation for this PHY device
  * @phydev: the phy_device struct
  *
