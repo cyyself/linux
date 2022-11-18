@@ -2960,10 +2960,24 @@ static int phylink_sfp_config_phy(struct phylink *pl, struct phy_device *phy)
 		return -EINVAL;
 	}
 
-	if (phylink_phy_no_inband(phy))
-		mode = MLO_AN_PHY;
-	else
+	/* Select whether to operate in in-band mode or not, based on the
+	 * capability of the PHY in the current link mode.
+	 */
+	ret = phy_validate_an_inband(phy, iface);
+	if (ret == PHY_AN_INBAND_UNKNOWN) {
+		if (phylink_phy_no_inband(phy))
+			mode = MLO_AN_PHY;
+		else
+			mode = MLO_AN_INBAND;
+
+		phylink_dbg(pl,
+			    "PHY driver does not report in-band autoneg capability, assuming %s\n",
+			    phylink_autoneg_inband(mode) ? "true" : "false");
+	} else if (ret & PHY_AN_INBAND_ON) {
 		mode = MLO_AN_INBAND;
+	} else {
+		mode = MLO_AN_PHY;
+	}
 
 	config.interface = iface;
 	linkmode_copy(support1, support);

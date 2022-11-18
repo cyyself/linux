@@ -773,6 +773,12 @@ struct phy_tdr_config {
 };
 #define PHY_PAIR_ALL -1
 
+enum phy_an_inband {
+	PHY_AN_INBAND_UNKNOWN		= BIT(0),
+	PHY_AN_INBAND_OFF		= BIT(1),
+	PHY_AN_INBAND_ON		= BIT(2),
+};
+
 /**
  * struct phy_plca_cfg - Configuration of the PLCA (Physical Layer Collision
  * Avoidance) Reconciliation Sublayer.
@@ -910,6 +916,15 @@ struct phy_driver {
 	 * if phydev->autoneg is off
 	 */
 	int (*config_aneg)(struct phy_device *phydev);
+
+	/**
+	 * @validate_an_inband: Report what types of in-band auto-negotiation
+	 * are available for the given PHY interface type. Returns a bit mask
+	 * of type enum phy_an_inband. Returning negative error codes is not
+	 * permitted.
+	 */
+	int (*validate_an_inband)(struct phy_device *phydev,
+				  phy_interface_t interface);
 
 	/** @aneg_done: Determines the auto negotiation result */
 	int (*aneg_done)(struct phy_device *phydev);
@@ -1617,6 +1632,8 @@ void phy_stop(struct phy_device *phydev);
 int phy_config_aneg(struct phy_device *phydev);
 int phy_start_aneg(struct phy_device *phydev);
 int phy_aneg_done(struct phy_device *phydev);
+int phy_validate_an_inband(struct phy_device *phydev,
+			   phy_interface_t interface);
 int phy_speed_down(struct phy_device *phydev, bool sync);
 int phy_speed_up(struct phy_device *phydev);
 bool phy_check_valid(int speed, int duplex, unsigned long *features);

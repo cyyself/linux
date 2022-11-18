@@ -926,6 +926,31 @@ static int phy_check_link_status(struct phy_device *phydev)
 }
 
 /**
+ * phy_validate_an_inband - validate which in-band autoneg modes are supported
+ * @phydev: the phy_device struct
+ * @interface: the MAC-side interface type
+ *
+ * Returns @PHY_AN_INBAND_UNKNOWN if it is unknown what in-band autoneg setting
+ * is required for the given PHY mode, or a bit mask of @PHY_AN_INBAND_OFF (if
+ * the PHY is able to work with in-band AN turned off) and @PHY_AN_INBAND_ON
+ * (if it works with the feature turned on). With the Generic PHY driver, the
+ * result will always be @PHY_AN_INBAND_UNKNOWN.
+ */
+int phy_validate_an_inband(struct phy_device *phydev,
+			   phy_interface_t interface)
+{
+	/* We may be called before phy_attach_direct() force-binds the
+	 * generic PHY driver to this device. In that case, report an unknown
+	 * setting rather than -EIO as most other functions do.
+	 */
+	if (!phydev->drv || !phydev->drv->validate_an_inband)
+		return PHY_AN_INBAND_UNKNOWN;
+
+	return phydev->drv->validate_an_inband(phydev, interface);
+}
+EXPORT_SYMBOL_GPL(phy_validate_an_inband);
+
+/**
  * _phy_start_aneg - start auto-negotiation for this PHY device
  * @phydev: the phy_device struct
  *
