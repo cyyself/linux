@@ -65,10 +65,10 @@ struct ubiblock_pdu {
 };
 
 /* Numbers of elements set in the @ubiblock_param array */
-static int ubiblock_devs __initdata;
+static int ubiblock_devs;
 
 /* MTD devices specification parameters */
-static struct ubiblock_param ubiblock_param[UBIBLOCK_MAX_DEVICES] __initdata;
+static struct ubiblock_param ubiblock_param[UBIBLOCK_MAX_DEVICES];
 
 struct ubiblock {
 	struct ubi_volume_desc *desc;
@@ -579,7 +579,7 @@ open_volume_desc(const char *name, int ubi_num, int vol_id)
 		return ubi_open_volume(ubi_num, vol_id, UBI_READONLY);
 }
 
-static void __init ubiblock_create_from_param(void)
+void ubiblock_create_from_param(void)
 {
 	int i, ret = 0;
 	struct ubiblock_param *p;
@@ -608,9 +608,10 @@ static void __init ubiblock_create_from_param(void)
 
 		ret = ubiblock_create(&vi);
 		if (ret) {
-			pr_err(
-			       "UBI: block: can't add '%s' volume on ubi%d_%d, err=%d\n",
-			       vi.name, p->ubi_num, p->vol_id, ret);
+			if (ret != -EEXIST && ret != -ENOENT)
+				pr_err(
+				       "UBI: block: can't add '%s' volume on ubi%d_%d, err=%d\n",
+				       vi.name, p->ubi_num, p->vol_id, ret);
 			continue;
 		}
 	}
@@ -640,13 +641,6 @@ int __init ubiblock_init(void)
 	ubiblock_major = register_blkdev(0, "ubiblock");
 	if (ubiblock_major < 0)
 		return ubiblock_major;
-
-	/*
-	 * Attach block devices from 'block=' module param.
-	 * Even if one block device in the param list fails to come up,
-	 * still allow the module to load and leave any others up.
-	 */
-	ubiblock_create_from_param();
 
 	/*
 	 * Block devices are only created upon user requests, so we ignore
