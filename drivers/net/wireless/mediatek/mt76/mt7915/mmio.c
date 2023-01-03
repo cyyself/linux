@@ -853,6 +853,7 @@ static int mt7915_mmio_init(struct mt76_dev *mdev,
 		dev->reg.map = mt7916_reg_map;
 		dev->reg.map_size = ARRAY_SIZE(mt7916_reg_map);
 		break;
+	case 0x7981:
 	case 0x7986:
 		dev->reg.reg_rev = mt7986_reg;
 		dev->reg.offs_rev = mt7916_offs;

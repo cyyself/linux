@@ -1236,6 +1236,7 @@ static int mt7986_wmac_remove(struct platform_device *pdev)
 
 static const struct of_device_id mt7986_wmac_of_match[] = {
 	{ .compatible = "mediatek,mt7986-wmac", .data = (u32 *)0x7986 },
+	{ .compatible = "mediatek,mt7981-wmac", .data = (u32 *)0x7981 },
 	{},
 };
 

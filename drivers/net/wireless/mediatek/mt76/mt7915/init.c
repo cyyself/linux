@@ -740,7 +740,8 @@ static bool mt7915_band_config(struct mt7915_dev *dev)
 
 	dev->phy.mt76->band_idx = 0;
 
-	if (is_mt7986(&dev->mt76)) {
+	if (is_mt7981(&dev->mt76)) {
+	} else if (is_mt7986(&dev->mt76)) {
 		u32 sku = mt7915_check_adie(dev, true);
 
 		/*

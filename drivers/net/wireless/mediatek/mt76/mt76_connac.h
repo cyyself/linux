@@ -183,9 +183,14 @@ static inline bool is_mt7916(struct mt76_dev *dev)
 	return mt76_chip(dev) == 0x7906;
 }
 
+static inline bool is_mt7981(struct mt76_dev *dev)
+{
+	return mt76_chip(dev) == 0x7981;
+}
+
 static inline bool is_mt7986(struct mt76_dev *dev)
 {
-	return mt76_chip(dev) == 0x7986;
+	return mt76_chip(dev) == 0x7986 || is_mt7981(dev);
 }
 
 static inline bool is_mt7996(struct mt76_dev *dev)
