@@ -331,28 +331,6 @@ static bool gpy_sgmii_need_reaneg(struct phy_device *phydev)
 	return false;
 }
 
-static bool gpy_2500basex_chk(struct phy_device *phydev)
-{
-	int ret;
-
-	ret = phy_read(phydev, PHY_MIISTAT);
-	if (ret < 0) {
-		phydev_err(phydev, "Error: MDIO register access failed: %d\n",
-			   ret);
-		return false;
-	}
-
-	if (!(ret & PHY_MIISTAT_LS) ||
-	    FIELD_GET(PHY_MIISTAT_SPD_MASK, ret) != PHY_MIISTAT_SPD_2500)
-		return false;
-
-	phydev->speed = SPEED_2500;
-	phydev->interface = PHY_INTERFACE_MODE_2500BASEX;
-	phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-		       VSPEC1_SGMII_CTRL_ANEN, 0);
-	return true;
-}
-
 static bool gpy_sgmii_aneg_en(struct phy_device *phydev)
 {
 	int ret;
@@ -439,8 +417,7 @@ static int gpy_config_aneg(struct phy_device *phydev)
 	/* No need to trigger re-ANEG if link speed is 2.5G or SGMII ANEG is
 	 * disabled.
 	 */
-	if (!gpy_sgmii_need_reaneg(phydev) || gpy_2500basex_chk(phydev) ||
-	    !gpy_sgmii_aneg_en(phydev))
+	if (!gpy_sgmii_need_reaneg(phydev) || !gpy_sgmii_aneg_en(phydev))
 		return 0;
 
 	/* There is a design constraint in GPY2xx device where SGMII AN is
@@ -522,33 +499,11 @@ static int gpy_update_interface(struct phy_device *phydev)
 	switch (phydev->speed) {
 	case SPEED_2500:
 		phydev->interface = PHY_INTERFACE_MODE_2500BASEX;
-		ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-				     VSPEC1_SGMII_CTRL_ANEN, 0);
-		if (ret < 0) {
-			phydev_err(phydev,
-				   "Error: Disable of SGMII ANEG failed: %d\n",
-				   ret);
-			return ret;
-		}
 		break;
 	case SPEED_1000:
 	case SPEED_100:
 	case SPEED_10:
 		phydev->interface = PHY_INTERFACE_MODE_SGMII;
-		if (gpy_sgmii_aneg_en(phydev))
-			break;
-		/* Enable and restart SGMII ANEG for 10/100/1000Mbps link speed
-		 * if ANEG is disabled (in 2500-BaseX mode).
-		 */
-		ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-				     VSPEC1_SGMII_ANEN_ANRS,
-				     VSPEC1_SGMII_ANEN_ANRS);
-		if (ret < 0) {
-			phydev_err(phydev,
-				   "Error: Enable of SGMII ANEG failed: %d\n",
-				   ret);
-			return ret;
-		}
 		break;
 	}
 
@@ -796,6 +751,34 @@ static int gpy115_loopback(struct phy_device *phydev, bool enable)
 	return genphy_soft_reset(phydev);
 }
 
+static int gpy_validate_an_inband(struct phy_device *phydev,
+				  phy_interface_t interface)
+{
+	if (interface == PHY_INTERFACE_MODE_SGMII)
+		return PHY_AN_INBAND_OFF | PHY_AN_INBAND_ON;
+	else
+		return PHY_AN_INBAND_OFF;
+}
+
+static int gpy_config_an_inband(struct phy_device *phydev,
+				phy_interface_t interface, bool enabled)
+{
+	int ret;
+
+	ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
+			     VSPEC1_SGMII_ANEN_ANRS,
+			     enabled ? VSPEC1_SGMII_ANEN_ANRS : 0);
+
+	if (ret < 0) {
+		phydev_err(phydev,
+			   "Error: Setting SGMII ANEG failed: %d\n",
+			   ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 static struct phy_driver gpy_drivers[] = {
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY2xx),
@@ -813,6 +796,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		.phy_id		= PHY_ID_GPY115B,
@@ -831,6 +816,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy115_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY115C),
@@ -848,6 +835,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy115_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		.phy_id		= PHY_ID_GPY211B,
@@ -866,6 +855,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY211C),
@@ -883,6 +874,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		.phy_id		= PHY_ID_GPY212B,
@@ -901,6 +894,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY212C),
@@ -918,6 +913,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		.phy_id		= PHY_ID_GPY215B,
@@ -936,6 +933,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY215C),
@@ -953,6 +952,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY241B),
@@ -970,6 +971,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY241BM),
@@ -987,6 +990,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 	{
 		PHY_ID_MATCH_MODEL(PHY_ID_GPY245B),
@@ -1004,6 +1009,8 @@ static struct phy_driver gpy_drivers[] = {
 		.set_wol	= gpy_set_wol,
 		.get_wol	= gpy_get_wol,
 		.set_loopback	= gpy_loopback,
+		.validate_an_inband = gpy_validate_an_inband,
+		.config_an_inband = gpy_config_an_inband,
 	},
 };
 module_phy_driver(gpy_drivers);
