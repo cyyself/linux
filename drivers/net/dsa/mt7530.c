@@ -2493,6 +2493,7 @@ static void mt7531_mac_port_get_caps(struct dsa_switch *ds, int port,
 		__set_bit(PHY_INTERFACE_MODE_2500BASEX,
 			  config->supported_interfaces);
 
+		config->sync_an_inband = true;
 		config->mac_capabilities |= MAC_2500FD;
 		break;
 	}
