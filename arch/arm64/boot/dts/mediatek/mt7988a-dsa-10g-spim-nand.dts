@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Copyright (C) 2022 MediaTek Inc.
+ * Author: Sam.Shih <sam.shih@mediatek.com>
+ */
+
+/dts-v1/;
+#include "mt7988a-rfb-spim-nand.dtsi"
+#include <dt-bindings/pinctrl/mt65xx.h>
+
+/ {
+	model = "MediaTek MT7988A DSA 10G SPIM-NAND RFB";
+	compatible = "mediatek,mt7988a-dsa-10g-spim-snand",
+		     "mediatek,mt7988a-rfb-snand",
+		     /* Reserve this for DVFS if creating new dts */
+		     "mediatek,mt7988";
+
+	chosen {
+		bootargs = "console=ttyS0,115200n1 loglevel=8  \
+			    earlycon=uart8250,mmio32,0x11000000 \
+			    pci=pcie_bus_perf";
+	};
+
+	memory {
+		reg = <0 0x40000000 0 0x40000000>;
+	};
+};
+
+
+&pio {
+	mdio0_pins: mdio0-pins {
+		mux {
+			function = "mdio";
+			groups = "mdc_mdio0";
+		};
+
+		conf {
+			groups = "mdc_mdio0";
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
+	};
+};
+
