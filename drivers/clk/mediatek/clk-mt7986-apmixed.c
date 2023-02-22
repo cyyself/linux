@@ -16,7 +16,7 @@
 #include "clk-mux.h"
 #include "clk-pll.h"
 
-#include <dt-bindings/clock/mt7986-clk.h>
+#include <dt-bindings/clock/mediatek,filogic-apmixed.h>
 #include <linux/clk.h>
 
 #define MT7986_PLL_FMAX (2500UL * MHZ)
