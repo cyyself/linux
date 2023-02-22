@@ -194,22 +194,4 @@
 #define CLK_APMIXED_MPLL		6
 #define CLK_APMIXED_APLL2		7
 
-/* SGMIISYS_0 */
-#define CLK_SGM0_TX_EN			0
-#define CLK_SGM0_RX_EN			1
-#define CLK_SGM0_CK0_EN			2
-#define CLK_SGM0_CDR_CK0_EN		3
-
-/* SGMIISYS_1 */
-#define CLK_SGM1_TX_EN			0
-#define CLK_SGM1_RX_EN			1
-#define CLK_SGM1_CK1_EN			2
-#define CLK_SGM1_CDR_CK1_EN		3
-
-/* ETHSYS */
-#define CLK_ETH_FE_EN			0
-#define CLK_ETH_GP2_EN			1
-#define CLK_ETH_GP1_EN			2
-#define CLK_ETH_WOCPU0_EN		3
-
 #endif /* _DT_BINDINGS_CLK_MT7981_H */

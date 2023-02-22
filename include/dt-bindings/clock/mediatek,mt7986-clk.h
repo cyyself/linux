@@ -144,26 +144,4 @@
 #define CLK_INFRA_IPCIEB_CK		54
 #define CLK_INFRA_TRNG_CK		55
 
-/* SGMIISYS_0 */
-
-#define CLK_SGMII0_TX250M_EN		0
-#define CLK_SGMII0_RX250M_EN		1
-#define CLK_SGMII0_CDR_REF		2
-#define CLK_SGMII0_CDR_FB		3
-
-/* SGMIISYS_1 */
-
-#define CLK_SGMII1_TX250M_EN		0
-#define CLK_SGMII1_RX250M_EN		1
-#define CLK_SGMII1_CDR_REF		2
-#define CLK_SGMII1_CDR_FB		3
-
-/* ETHSYS */
-
-#define CLK_ETH_FE_EN			0
-#define CLK_ETH_GP2_EN			1
-#define CLK_ETH_GP1_EN			2
-#define CLK_ETH_WOCPU1_EN		3
-#define CLK_ETH_WOCPU0_EN		4
-
 #endif /* _DT_BINDINGS_CLK_MT7986_H */

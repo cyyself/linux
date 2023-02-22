@@ -14,7 +14,7 @@
 #include "clk-mtk.h"
 #include "clk-gate.h"
 
-#include <dt-bindings/clock/mt7986-clk.h>
+#include <dt-bindings/clock/mediatek,ethsys.h>
 
 static const struct mtk_gate_regs sgmii0_cg_regs = {
 	.set_ofs = 0xe4,
