@@ -14,7 +14,7 @@
 #include "clk-gate.h"
 #include "clk-mux.h"
 
-#include <dt-bindings/clock/mt7986-clk.h>
+#include <dt-bindings/clock/mediatek,mt7986-clk.h>
 #include <linux/clk.h>
 
 static DEFINE_SPINLOCK(mt7986_clk_lock);
