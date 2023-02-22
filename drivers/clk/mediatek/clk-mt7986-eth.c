@@ -81,6 +81,9 @@ static const struct mtk_clk_desc sgmii1_desc = {
 };
 
 static const struct of_device_id of_match_clk_mt7986_eth[] = {
+	{ .compatible = "mediatek,mt7981-ethsys", .data = &eth_desc },
+	{ .compatible = "mediatek,mt7981-sgmiisys_0", .data = &sgmii0_desc },
+	{ .compatible = "mediatek,mt7981-sgmiisys_1", .data = &sgmii1_desc },
 	{ .compatible = "mediatek,mt7986-ethsys", .data = &eth_desc },
 	{ .compatible = "mediatek,mt7986-sgmiisys_0", .data = &sgmii0_desc },
 	{ .compatible = "mediatek,mt7986-sgmiisys_1", .data = &sgmii1_desc },

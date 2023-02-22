@@ -61,6 +61,7 @@ static const struct mtk_pll_data plls[] = {
 };
 
 static const struct of_device_id of_match_clk_mt7986_apmixed[] = {
+	{ .compatible = "mediatek,mt7981-apmixedsys", },
 	{ .compatible = "mediatek,mt7986-apmixedsys", },
 	{ }
 };
