@@ -542,6 +542,7 @@ config RISCV_INTC
 	bool "RISC-V Local Interrupt Controller"
 	depends on RISCV
 	default y
+	select IRQ_DOMAIN_HIERARCHY
 	help
 	   This enables support for the per-HART local interrupt controller
 	   found in standard RISC-V systems.  The per-HART local interrupt
