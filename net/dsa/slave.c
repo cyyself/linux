@@ -1817,13 +1817,8 @@ static int dsa_slave_phy_setup(struct net_device *slave_dev)
 	struct dsa_port *dp = dsa_slave_to_port(slave_dev);
 	struct device_node *port_dn = dp->dn;
 	struct dsa_switch *ds = dp->ds;
-	phy_interface_t mode;
 	u32 phy_flags = 0;
 	int ret;
-
-	ret = of_get_phy_mode(port_dn, &mode);
-	if (ret)
-		mode = PHY_INTERFACE_MODE_NA;
 
 	dp->pl_config.dev = &slave_dev->dev;
 	dp->pl_config.type = PHYLINK_NETDEV;
@@ -1837,13 +1832,9 @@ static int dsa_slave_phy_setup(struct net_device *slave_dev)
 		dp->pl_config.poll_fixed_state = true;
 	}
 
-	dp->pl = phylink_create(&dp->pl_config, of_fwnode_handle(port_dn), mode,
-				&dsa_port_phylink_mac_ops);
-	if (IS_ERR(dp->pl)) {
-		netdev_err(slave_dev,
-			   "error creating PHYLINK: %ld\n", PTR_ERR(dp->pl));
-		return PTR_ERR(dp->pl);
-	}
+	ret = dsa_port_phylink_create(dp);
+	if (ret)
+		return ret;
 
 	if (ds->ops->get_phy_flags)
 		phy_flags = ds->ops->get_phy_flags(ds, dp->index);
@@ -1986,13 +1977,6 @@ int dsa_slave_create(struct dsa_port *port)
 	port->slave = slave_dev;
 	dsa_slave_setup_tagger(slave_dev);
 
-	rtnl_lock();
-	ret = dsa_slave_change_mtu(slave_dev, ETH_DATA_LEN);
-	rtnl_unlock();
-	if (ret && ret != -EOPNOTSUPP)
-		dev_warn(ds->dev, "nonfatal error %d setting MTU to %d on port %d\n",
-			 ret, ETH_DATA_LEN, port->index);
-
 	netif_carrier_off(slave_dev);
 
 	ret = dsa_slave_phy_setup(slave_dev);
@@ -2004,6 +1988,11 @@ int dsa_slave_create(struct dsa_port *port)
 	}
 
 	rtnl_lock();
+
+	ret = dsa_slave_change_mtu(slave_dev, ETH_DATA_LEN);
+	if (ret && ret != -EOPNOTSUPP)
+		dev_warn(ds->dev, "nonfatal error %d setting MTU to %d on port %d\n",
+			 ret, ETH_DATA_LEN, port->index);
 
 	ret = register_netdevice(slave_dev);
 	if (ret) {
@@ -2322,6 +2311,36 @@ static int dsa_slave_netdevice_event(struct notifier_block *nb,
 		err = dsa_port_lag_change(dp, info->lower_state_info);
 		return notifier_from_errno(err);
 	}
+	case NETDEV_CHANGE:
+	case NETDEV_UP: {
+		/* Track state of master port.
+		 * DSA driver may require the master port (and indirectly
+		 * the tagger) to be available for some special operation.
+		 */
+		if (netdev_uses_dsa(dev)) {
+			struct dsa_port *cpu_dp = dev->dsa_ptr;
+			struct dsa_switch_tree *dst = cpu_dp->ds->dst;
+
+			/* Track when the master port is UP */
+			dsa_tree_master_oper_state_change(dst, dev,
+							  netif_oper_up(dev));
+
+			/* Track when the master port is ready and can accept
+			 * packet.
+			 * NETDEV_UP event is not enough to flag a port as ready.
+			 * We also have to wait for linkwatch_do_dev to dev_activate
+			 * and emit a NETDEV_CHANGE event.
+			 * We check if a master port is ready by checking if the dev
+			 * have a qdisc assigned and is not noop.
+			 */
+			dsa_tree_master_admin_state_change(dst, dev,
+							   !qdisc_tx_is_noop(dev));
+
+			return NOTIFY_OK;
+		}
+
+		return NOTIFY_DONE;
+	}
 	case NETDEV_GOING_DOWN: {
 		struct dsa_port *dp, *cpu_dp;
 		struct dsa_switch_tree *dst;
@@ -2332,6 +2351,8 @@ static int dsa_slave_netdevice_event(struct notifier_block *nb,
 
 		cpu_dp = dev->dsa_ptr;
 		dst = cpu_dp->ds->dst;
+
+		dsa_tree_master_admin_state_change(dst, dev, false);
 
 		list_for_each_entry(dp, &dst->ports, list) {
 			if (!dsa_is_user_port(dp->ds, dp->index))

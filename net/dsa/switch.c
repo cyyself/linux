@@ -113,24 +113,13 @@ static int dsa_switch_bridge_join(struct dsa_switch *ds,
 	return dsa_tag_8021q_bridge_join(ds, info);
 }
 
-static int dsa_switch_bridge_leave(struct dsa_switch *ds,
-				   struct dsa_notifier_bridge_info *info)
+static int dsa_switch_sync_vlan_filtering(struct dsa_switch *ds,
+					  struct dsa_notifier_bridge_info *info)
 {
-	struct dsa_switch_tree *dst = ds->dst;
 	struct netlink_ext_ack extack = {0};
 	bool change_vlan_filtering = false;
 	bool vlan_filtering;
 	int err, port;
-
-	if (dst->index == info->tree_index && ds->index == info->sw_index &&
-	    ds->ops->port_bridge_leave)
-		ds->ops->port_bridge_leave(ds, info->port, info->br);
-
-	if ((dst->index != info->tree_index || ds->index != info->sw_index) &&
-	    ds->ops->crosschip_bridge_leave)
-		ds->ops->crosschip_bridge_leave(ds, info->tree_index,
-						info->sw_index, info->port,
-						info->br);
 
 	if (ds->needs_standalone_vlan_filtering && !br_vlan_enabled(info->br)) {
 		change_vlan_filtering = true;
@@ -169,6 +158,31 @@ static int dsa_switch_bridge_leave(struct dsa_switch *ds,
 			dev_err(ds->dev, "port %d: %s\n", info->port,
 				extack._msg);
 		if (err && err != -EOPNOTSUPP)
+			return err;
+	}
+
+	return 0;
+}
+
+static int dsa_switch_bridge_leave(struct dsa_switch *ds,
+				   struct dsa_notifier_bridge_info *info)
+{
+	struct dsa_switch_tree *dst = ds->dst;
+	int err;
+
+	if (dst->index == info->tree_index && ds->index == info->sw_index &&
+	    ds->ops->port_bridge_leave)
+		ds->ops->port_bridge_leave(ds, info->port, info->br);
+
+	if ((dst->index != info->tree_index || ds->index != info->sw_index) &&
+	    ds->ops->crosschip_bridge_leave)
+		ds->ops->crosschip_bridge_leave(ds, info->tree_index,
+						info->sw_index, info->port,
+						info->br);
+
+	if (ds->dst->index == info->tree_index && ds->index == info->sw_index) {
+		err = dsa_switch_sync_vlan_filtering(ds, info);
+		if (err)
 			return err;
 	}
 
@@ -616,6 +630,60 @@ static int dsa_switch_change_tag_proto(struct dsa_switch *ds,
 	return 0;
 }
 
+/* We use the same cross-chip notifiers to inform both the tagger side, as well
+ * as the switch side, of connection and disconnection events.
+ * Since ds->tagger_data is owned by the tagger, it isn't a hard error if the
+ * switch side doesn't support connecting to this tagger, and therefore, the
+ * fact that we don't disconnect the tagger side doesn't constitute a memory
+ * leak: the tagger will still operate with persistent per-switch memory, just
+ * with the switch side unconnected to it. What does constitute a hard error is
+ * when the switch side supports connecting but fails.
+ */
+static int
+dsa_switch_connect_tag_proto(struct dsa_switch *ds,
+			     struct dsa_notifier_tag_proto_info *info)
+{
+	const struct dsa_device_ops *tag_ops = info->tag_ops;
+	int err;
+
+	/* Notify the new tagger about the connection to this switch */
+	if (tag_ops->connect) {
+		err = tag_ops->connect(ds);
+		if (err)
+			return err;
+	}
+
+	if (!ds->ops->connect_tag_protocol)
+		return -EOPNOTSUPP;
+
+	/* Notify the switch about the connection to the new tagger */
+	err = ds->ops->connect_tag_protocol(ds, tag_ops->proto);
+	if (err) {
+		/* Revert the new tagger's connection to this tree */
+		if (tag_ops->disconnect)
+			tag_ops->disconnect(ds);
+		return err;
+	}
+
+	return 0;
+}
+
+static int
+dsa_switch_disconnect_tag_proto(struct dsa_switch *ds,
+				struct dsa_notifier_tag_proto_info *info)
+{
+	const struct dsa_device_ops *tag_ops = info->tag_ops;
+
+	/* Notify the tagger about the disconnection from this switch */
+	if (tag_ops->disconnect && ds->tagger_data)
+		tag_ops->disconnect(ds);
+
+	/* No need to notify the switch, since it shouldn't have any
+	 * resources to tear down
+	 */
+	return 0;
+}
+
 static int dsa_switch_mrp_add(struct dsa_switch *ds,
 			      struct dsa_notifier_mrp_info *info)
 {
@@ -664,6 +732,18 @@ dsa_switch_mrp_del_ring_role(struct dsa_switch *ds,
 	if (ds->index == info->sw_index)
 		return ds->ops->port_mrp_del_ring_role(ds, info->port,
 						       info->mrp);
+
+	return 0;
+}
+
+static int
+dsa_switch_master_state_change(struct dsa_switch *ds,
+			       struct dsa_notifier_master_state_info *info)
+{
+	if (!ds->ops->master_state_change)
+		return 0;
+
+	ds->ops->master_state_change(ds, info->master, info->operational);
 
 	return 0;
 }
@@ -735,6 +815,12 @@ static int dsa_switch_event(struct notifier_block *nb,
 	case DSA_NOTIFIER_TAG_PROTO:
 		err = dsa_switch_change_tag_proto(ds, info);
 		break;
+	case DSA_NOTIFIER_TAG_PROTO_CONNECT:
+		err = dsa_switch_connect_tag_proto(ds, info);
+		break;
+	case DSA_NOTIFIER_TAG_PROTO_DISCONNECT:
+		err = dsa_switch_disconnect_tag_proto(ds, info);
+		break;
 	case DSA_NOTIFIER_MRP_ADD:
 		err = dsa_switch_mrp_add(ds, info);
 		break;
@@ -752,6 +838,9 @@ static int dsa_switch_event(struct notifier_block *nb,
 		break;
 	case DSA_NOTIFIER_TAG_8021Q_VLAN_DEL:
 		err = dsa_switch_tag_8021q_vlan_del(ds, info);
+		break;
+	case DSA_NOTIFIER_MASTER_STATE_CHANGE:
+		err = dsa_switch_master_state_change(ds, info);
 		break;
 	default:
 		err = -EOPNOTSUPP;

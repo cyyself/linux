@@ -345,6 +345,8 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	gd->first_minor = (new->devnum) << tr->part_bits;
 	gd->minors = 1 << tr->part_bits;
 	gd->fops = &mtd_block_ops;
+	if (IS_ENABLED(CONFIG_FIT_PARTITION) && !mtd_type_is_nand(new->mtd))
+		gd->flags |= GENHD_FL_EXT_DEVT;
 
 	if (tr->part_bits)
 		if (new->devnum < 26)
@@ -384,13 +386,6 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	if (new->readonly)
 		set_disk_ro(gd, 1);
 
-	device_add_disk(&new->mtd->dev, gd, NULL);
-
-	if (new->disk_attributes) {
-		ret = sysfs_create_group(&disk_to_dev(gd)->kobj,
-					new->disk_attributes);
-		WARN_ON(ret);
-	}
 	return 0;
 
 out_free_tag_set:
@@ -400,6 +395,27 @@ out_kfree_tag_set:
 out_list_del:
 	list_del(&new->list);
 	return ret;
+}
+
+void register_mtd_blktrans_devs(void)
+{
+	struct mtd_blktrans_ops *tr;
+	struct mtd_blktrans_dev *dev, *next;
+	int ret;
+
+	list_for_each_entry(tr, &blktrans_majors, list) {
+		list_for_each_entry_safe(dev, next, &tr->devs, list) {
+			if (disk_live(dev->disk))
+				continue;
+
+			device_add_disk(&dev->mtd->dev, dev->disk, NULL);
+			if (dev->disk_attributes) {
+				ret = sysfs_create_group(&disk_to_dev(dev->disk)->kobj,
+							dev->disk_attributes);
+				WARN_ON(ret);
+			}
+		}
+	}
 }
 
 int del_mtd_blktrans_dev(struct mtd_blktrans_dev *old)

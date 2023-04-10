@@ -23,6 +23,7 @@ struct software_node;
 struct spi_controller;
 struct spi_transfer;
 struct spi_controller_mem_ops;
+struct spi_controller_mem_caps;
 
 /*
  * INTERFACES between SPI master-side drivers and SPI slave protocol handlers,
@@ -289,6 +290,40 @@ struct spi_driver {
 	struct device_driver	driver;
 };
 
+enum {
+	SPI_CAL_READ_DATA = 0,
+	SPI_CAL_READ_PP = 1, /* only for SPI-NAND */
+	SPI_CAL_READ_SFDP = 2, /* only for SPI-NOR */
+};
+
+struct nand_addr {
+	unsigned int lun;
+	unsigned int plane;
+	unsigned int eraseblock;
+	unsigned int page;
+	unsigned int dataoffs;
+};
+
+/**
+ * Read calibration rule from device dts node.
+ * Once calibration result matches the rule, we regard is as success.
+ */
+struct spi_cal_rule {
+	int datalen;
+	u8 *match_data;
+	int addrlen;
+	u32 *addr;
+	int mode;
+};
+
+struct spi_cal_target {
+	u32 *cal_item;
+	int cal_min; /* min of cal_item */
+	int cal_max; /* max of cal_item */
+	int step; /* Increase/decrease cal_item */
+	struct list_head list;
+};
+
 static inline struct spi_driver *to_spi_driver(struct device_driver *drv)
 {
 	return drv ? container_of(drv, struct spi_driver, driver) : NULL;
@@ -419,6 +454,7 @@ extern struct spi_device *spi_new_ancillary_device(struct spi_device *spi, u8 ch
  * @mem_ops: optimized/dedicated operations for interactions with SPI memory.
  *	     This field is optional and should only be implemented if the
  *	     controller has native support for memory like operations.
+ * @mem_caps: controller capabilities for the handling of memory operations.
  * @unprepare_message: undo any work done by prepare_message().
  * @slave_abort: abort the ongoing transfer request on an SPI slave controller
  * @cs_gpios: LEGACY: array of GPIO descs to use as chip select lines; one per
@@ -643,6 +679,7 @@ struct spi_controller {
 
 	/* Optimized handlers for SPI memory-like operations. */
 	const struct spi_controller_mem_ops *mem_ops;
+	const struct spi_controller_mem_caps *mem_caps;
 
 	/* gpio chip select */
 	int			*cs_gpios;
@@ -661,6 +698,11 @@ struct spi_controller {
 	/* dummy data for full duplex devices */
 	void			*dummy_rx;
 	void			*dummy_tx;
+
+	/* For calibration */
+	int (*append_caldata)(struct spi_controller *ctlr);
+	struct list_head *cal_target;
+	struct spi_cal_rule *cal_rule;
 
 	int (*fw_translate_cs)(struct spi_controller *ctlr, unsigned cs);
 
@@ -1473,6 +1515,9 @@ static inline int
 spi_register_board_info(struct spi_board_info const *info, unsigned n)
 	{ return 0; }
 #endif
+
+extern int spi_do_calibration(struct spi_controller *ctlr,
+	struct spi_device *spi, int (*cal_read)(void *, u32 *, int, u8 *, int), void *drv_priv);
 
 /* If you're hotplugging an adapter with devices (parport, usb, etc)
  * use spi_new_device() to describe each device.  You can also call

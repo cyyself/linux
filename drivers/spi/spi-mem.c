@@ -160,24 +160,28 @@ static bool spi_mem_check_buswidth(struct spi_mem *mem,
 	return true;
 }
 
-bool spi_mem_dtr_supports_op(struct spi_mem *mem,
-			     const struct spi_mem_op *op)
-{
-	if (op->cmd.nbytes != 2)
-		return false;
-
-	return spi_mem_check_buswidth(mem, op);
-}
-EXPORT_SYMBOL_GPL(spi_mem_dtr_supports_op);
-
 bool spi_mem_default_supports_op(struct spi_mem *mem,
 				 const struct spi_mem_op *op)
 {
-	if (op->cmd.dtr || op->addr.dtr || op->dummy.dtr || op->data.dtr)
-		return false;
+	struct spi_controller *ctlr = mem->spi->controller;
+	bool op_is_dtr =
+		op->cmd.dtr || op->addr.dtr || op->dummy.dtr || op->data.dtr;
 
-	if (op->cmd.nbytes != 1)
-		return false;
+	if (op_is_dtr) {
+		if (!spi_mem_controller_is_capable(ctlr, dtr))
+			return false;
+
+		if (op->cmd.nbytes != 2)
+			return false;
+	} else {
+		if (op->cmd.nbytes != 1)
+			return false;
+	}
+
+	if (op->data.ecc) {
+		if (!spi_mem_controller_is_capable(ctlr, ecc))
+			return false;
+	}
 
 	return spi_mem_check_buswidth(mem, op);
 }
@@ -405,6 +409,14 @@ int spi_mem_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(spi_mem_exec_op);
+
+int spi_mem_do_calibration(struct spi_mem *mem,
+	int (*cal_read)(void *priv, u32 *addr, int addrlen, u8 *buf, int readlen),
+	void *priv)
+{
+	return spi_do_calibration(mem->spi->controller, mem->spi, cal_read, priv);
+}
+EXPORT_SYMBOL_GPL(spi_mem_do_calibration);
 
 /**
  * spi_mem_get_name() - Return the SPI mem device name to be used by the
