@@ -735,8 +735,28 @@ static void mtk_mac_link_up(struct phylink_config *config,
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 }
 
+void mtk_eth_soc_validate(struct phylink_config *config,
+			      unsigned long *supported,
+			      struct phylink_link_state *state)
+{
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	phylink_set_port_modes(mask);
+	phylink_set(mask, Autoneg);
+
+	if (state->interface == PHY_INTERFACE_MODE_2500BASEX) {
+		// Support 2500BaseX and SGMII mode switch
+		phylink_get_linkmodes(mask, PHY_INTERFACE_MODE_SGMII, config->mac_capabilities);
+	}
+
+	phylink_get_linkmodes(mask, state->interface, config->mac_capabilities);
+
+	linkmode_and(supported, supported, mask);
+	linkmode_and(state->advertising, state->advertising, mask);
+}
+
 static const struct phylink_mac_ops mtk_phylink_ops = {
-	.validate = phylink_generic_validate,
+	.validate = mtk_eth_soc_validate,
 	.mac_select_pcs = mtk_mac_select_pcs,
 	.mac_pcs_get_state = mtk_mac_pcs_get_state,
 	.mac_config = mtk_mac_config,
