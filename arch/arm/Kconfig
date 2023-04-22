@@ -117,6 +117,7 @@ config ARM
 	select HAVE_UID16
 	select HAVE_VIRT_CPU_ACCOUNTING_GEN
 	select IRQ_FORCED_THREADING
+	select HAVE_LD_DEAD_CODE_DATA_ELIMINATION
 	select MODULES_USE_ELF_REL
 	select NEED_DMA_MAP_STATE
 	select OF_EARLY_FLATTREE if OF
@@ -1727,6 +1728,14 @@ config ARM_ATAG_DTB_COMPAT_CMDLINE_EXTEND
 	  appended to the the device tree bootargs property.
 
 endchoice
+
+config CMDLINE_OVERRIDE
+	bool "Use alternative cmdline from device tree"
+	help
+	  Some bootloaders may have uneditable bootargs. While CMDLINE_FORCE can
+	  be used, this is not a good option for kernels that are shared across
+	  devices. This setting enables using "chosen/cmdline-override" as the
+	  cmdline if it exists in the device tree.
 
 config CMDLINE
 	string "Default kernel command string"

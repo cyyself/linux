@@ -3824,62 +3824,18 @@ static void mvneta_validate(struct phylink_config *config,
 			    unsigned long *supported,
 			    struct phylink_link_state *state)
 {
-	struct net_device *ndev = to_net_dev(config->dev);
-	struct mvneta_port *pp = netdev_priv(ndev);
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
-
 	/* We only support QSGMII, SGMII, 802.3z and RGMII modes.
 	 * When in 802.3z mode, we must have AN enabled:
 	 * "Bit 2 Field InBandAnEn In-band Auto-Negotiation enable. ...
 	 * When <PortType> = 1 (1000BASE-X) this field must be set to 1."
 	 */
-	if (phy_interface_mode_is_8023z(state->interface)) {
-		if (!phylink_test(state->advertising, Autoneg)) {
-			bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
-			return;
-		}
-	} else if (state->interface != PHY_INTERFACE_MODE_NA &&
-		   state->interface != PHY_INTERFACE_MODE_QSGMII &&
-		   state->interface != PHY_INTERFACE_MODE_SGMII &&
-		   !phy_interface_mode_is_rgmii(state->interface)) {
-		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+	if (phy_interface_mode_is_8023z(state->interface) &&
+	    !phylink_test(state->advertising, Autoneg)) {
+		linkmode_zero(supported);
 		return;
 	}
 
-	/* Allow all the expected bits */
-	phylink_set(mask, Autoneg);
-	phylink_set_port_modes(mask);
-
-	/* Asymmetric pause is unsupported */
-	phylink_set(mask, Pause);
-
-	/* Half-duplex at speeds higher than 100Mbit is unsupported */
-	if (pp->comphy || state->interface != PHY_INTERFACE_MODE_2500BASEX) {
-		phylink_set(mask, 1000baseT_Full);
-		phylink_set(mask, 1000baseX_Full);
-	}
-	if (pp->comphy || state->interface == PHY_INTERFACE_MODE_2500BASEX) {
-		phylink_set(mask, 2500baseT_Full);
-		phylink_set(mask, 2500baseX_Full);
-	}
-
-	if (!phy_interface_mode_is_8023z(state->interface)) {
-		/* 10M and 100M are only supported in non-802.3z mode */
-		phylink_set(mask, 10baseT_Half);
-		phylink_set(mask, 10baseT_Full);
-		phylink_set(mask, 100baseT_Half);
-		phylink_set(mask, 100baseT_Full);
-	}
-
-	bitmap_and(supported, supported, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-	bitmap_and(state->advertising, state->advertising, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-
-	/* We can only operate at 2500BaseX or 1000BaseX.  If requested
-	 * to advertise both, only report advertising at 2500BaseX.
-	 */
-	phylink_helper_basex_speed(state);
+	phylink_generic_validate(config, supported, state);
 }
 
 static void mvneta_mac_pcs_get_state(struct phylink_config *config,
@@ -5182,6 +5138,35 @@ static int mvneta_probe(struct platform_device *pdev)
 
 	pp->phylink_config.dev = &dev->dev;
 	pp->phylink_config.type = PHYLINK_NETDEV;
+	pp->phylink_config.legacy_pre_march2020 = true;
+	pp->phylink_config.mac_capabilities = MAC_SYM_PAUSE | MAC_10 |
+		MAC_100 | MAC_1000FD | MAC_2500FD;
+
+	phy_interface_set_rgmii(pp->phylink_config.supported_interfaces);
+	__set_bit(PHY_INTERFACE_MODE_QSGMII,
+		  pp->phylink_config.supported_interfaces);
+	if (comphy) {
+		/* If a COMPHY is present, we can support any of the serdes
+		 * modes and switch between them.
+		 */
+		__set_bit(PHY_INTERFACE_MODE_SGMII,
+			  pp->phylink_config.supported_interfaces);
+		__set_bit(PHY_INTERFACE_MODE_1000BASEX,
+			  pp->phylink_config.supported_interfaces);
+		__set_bit(PHY_INTERFACE_MODE_2500BASEX,
+			  pp->phylink_config.supported_interfaces);
+	} else if (phy_mode == PHY_INTERFACE_MODE_2500BASEX) {
+		/* No COMPHY, with only 2500BASE-X mode supported */
+		__set_bit(PHY_INTERFACE_MODE_2500BASEX,
+			  pp->phylink_config.supported_interfaces);
+	} else if (phy_mode == PHY_INTERFACE_MODE_1000BASEX ||
+		   phy_mode == PHY_INTERFACE_MODE_SGMII) {
+		/* No COMPHY, we can switch between 1000BASE-X and SGMII */
+		__set_bit(PHY_INTERFACE_MODE_1000BASEX,
+			  pp->phylink_config.supported_interfaces);
+		__set_bit(PHY_INTERFACE_MODE_SGMII,
+			  pp->phylink_config.supported_interfaces);
+	}
 
 	phylink = phylink_create(&pp->phylink_config, pdev->dev.fwnode,
 				 phy_mode, &mvneta_phylink_ops);

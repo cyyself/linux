@@ -683,9 +683,8 @@ static void mv88e6xxx_validate(struct dsa_switch *ds, int port,
 	if (chip->info->ops->phylink_validate)
 		chip->info->ops->phylink_validate(chip, port, mask, state);
 
-	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
-	bitmap_and(state->advertising, state->advertising, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	linkmode_and(supported, supported, mask);
+	linkmode_and(state->advertising, state->advertising, mask);
 
 	/* We can only operate at 2500BaseX or 1000BaseX.  If requested
 	 * to advertise both, only report advertising at 2500BaseX.
@@ -2985,6 +2984,9 @@ static int mv88e6xxx_setup_port(struct mv88e6xxx_chip *chip, int port)
 		reg = 0;
 	else
 		reg = 1 << port;
+
+	/* Disable ATU member violation interrupt */
+	reg |= MV88E6XXX_PORT_ASSOC_VECTOR_IGNORE_WRONG;
 
 	err = mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_ASSOC_VECTOR,
 				   reg);
@@ -6333,6 +6335,7 @@ static int mv88e6xxx_register_switch(struct mv88e6xxx_chip *chip)
 	ds->ops = &mv88e6xxx_switch_ops;
 	ds->ageing_time_min = chip->info->age_time_coeff;
 	ds->ageing_time_max = chip->info->age_time_coeff * U8_MAX;
+	ds->assisted_learning_on_cpu_port = true;
 
 	/* Some chips support up to 32, but that requires enabling the
 	 * 5-bit port mode, which we do not support. 640k^W16 ought to

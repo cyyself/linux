@@ -8,6 +8,7 @@
 
 #include <linux/module.h>
 #include <linux/bitfield.h>
+#include <linux/of.h>
 #include <linux/phy.h>
 #include <linux/netdevice.h>
 
@@ -30,6 +31,7 @@
 #define PHY_MIISTAT		0x18	/* MII state */
 #define PHY_IMASK		0x19	/* interrupt mask */
 #define PHY_ISTAT		0x1A	/* interrupt status */
+#define PHY_LED			0x1B	/* LED control */
 #define PHY_FWV			0x1E	/* firmware version */
 
 #define PHY_MIISTAT_SPD_MASK	GENMASK(2, 0)
@@ -53,9 +55,14 @@
 				 PHY_IMASK_ADSC | \
 				 PHY_IMASK_ANC)
 
+#define PHY_LED_NUM_LEDS	4
+
 #define PHY_FWV_REL_MASK	BIT(15)
 #define PHY_FWV_TYPE_MASK	GENMASK(11, 8)
 #define PHY_FWV_MINOR_MASK	GENMASK(7, 0)
+
+/* LED */
+#define VSPEC1_LED(x)		(0x1 + x)
 
 /* SGMII */
 #define VSPEC1_SGMII_CTRL	0x08
@@ -80,6 +87,31 @@ static const struct {
 	{9, 0x73},
 };
 
+static int gpy_led_write(struct phy_device *phydev)
+{
+	struct device_node *node = phydev->mdio.dev.of_node;
+	u32 led_regs[PHY_LED_NUM_LEDS];
+	int i, ret;
+
+	if (!IS_ENABLED(CONFIG_OF_MDIO))
+		return 0;
+
+	if (of_property_read_u32_array(node, "mxl,led-config", led_regs, PHY_LED_NUM_LEDS))
+		return 0;
+
+	/* Enable LED function handling on all ports*/
+	phy_write(phydev, PHY_LED, 0xFF00);
+
+	/* Write LED register values */
+	for (i = 0; i < PHY_LED_NUM_LEDS; i++) {
+		ret = phy_write_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_LED(i), (u16)led_regs[i]);
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int gpy_config_init(struct phy_device *phydev)
 {
 	int ret;
@@ -91,7 +123,16 @@ static int gpy_config_init(struct phy_device *phydev)
 
 	/* Clear all pending interrupts */
 	ret = phy_read(phydev, PHY_ISTAT);
-	return ret < 0 ? ret : 0;
+	if (ret < 0)
+		return ret;
+
+	/* Disable SGMII auto-negotiation */
+	ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
+			     VSPEC1_SGMII_CTRL_ANEN, 0);
+	if (ret < 0)
+		return ret;
+
+	return gpy_led_write(phydev);
 }
 
 static int gpy_probe(struct phy_device *phydev)
@@ -114,65 +155,6 @@ static int gpy_probe(struct phy_device *phydev)
 		    (fw_version & PHY_FWV_REL_MASK) ? "release" : "test");
 
 	return 0;
-}
-
-static bool gpy_sgmii_need_reaneg(struct phy_device *phydev)
-{
-	int fw_ver, fw_type, fw_minor;
-	size_t i;
-
-	fw_ver = phy_read(phydev, PHY_FWV);
-	if (fw_ver < 0)
-		return true;
-
-	fw_type = FIELD_GET(PHY_FWV_TYPE_MASK, fw_ver);
-	fw_minor = FIELD_GET(PHY_FWV_MINOR_MASK, fw_ver);
-
-	for (i = 0; i < ARRAY_SIZE(ver_need_sgmii_reaneg); i++) {
-		if (fw_type != ver_need_sgmii_reaneg[i].type)
-			continue;
-		if (fw_minor < ver_need_sgmii_reaneg[i].minor)
-			return true;
-		break;
-	}
-
-	return false;
-}
-
-static bool gpy_2500basex_chk(struct phy_device *phydev)
-{
-	int ret;
-
-	ret = phy_read(phydev, PHY_MIISTAT);
-	if (ret < 0) {
-		phydev_err(phydev, "Error: MDIO register access failed: %d\n",
-			   ret);
-		return false;
-	}
-
-	if (!(ret & PHY_MIISTAT_LS) ||
-	    FIELD_GET(PHY_MIISTAT_SPD_MASK, ret) != PHY_MIISTAT_SPD_2500)
-		return false;
-
-	phydev->speed = SPEED_2500;
-	phydev->interface = PHY_INTERFACE_MODE_2500BASEX;
-	phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-		       VSPEC1_SGMII_CTRL_ANEN, 0);
-	return true;
-}
-
-static bool gpy_sgmii_aneg_en(struct phy_device *phydev)
-{
-	int ret;
-
-	ret = phy_read_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL);
-	if (ret < 0) {
-		phydev_err(phydev, "Error: MMD register access failed: %d\n",
-			   ret);
-		return true;
-	}
-
-	return (ret & VSPEC1_SGMII_CTRL_ANEN) ? true : false;
 }
 
 static int gpy_config_aneg(struct phy_device *phydev)
@@ -213,53 +195,11 @@ static int gpy_config_aneg(struct phy_device *phydev)
 	    phydev->interface == PHY_INTERFACE_MODE_INTERNAL)
 		return 0;
 
-	/* No need to trigger re-ANEG if link speed is 2.5G or SGMII ANEG is
-	 * disabled.
-	 */
-	if (!gpy_sgmii_need_reaneg(phydev) || gpy_2500basex_chk(phydev) ||
-	    !gpy_sgmii_aneg_en(phydev))
-		return 0;
-
-	/* There is a design constraint in GPY2xx device where SGMII AN is
-	 * only triggered when there is change of speed. If, PHY link
-	 * partner`s speed is still same even after PHY TPI is down and up
-	 * again, SGMII AN is not triggered and hence no new in-band message
-	 * from GPY to MAC side SGMII.
-	 * This could cause an issue during power up, when PHY is up prior to
-	 * MAC. At this condition, once MAC side SGMII is up, MAC side SGMII
-	 * wouldn`t receive new in-band message from GPY with correct link
-	 * status, speed and duplex info.
-	 *
-	 * 1) If PHY is already up and TPI link status is still down (such as
-	 *    hard reboot), TPI link status is polled for 4 seconds before
-	 *    retriggerring SGMII AN.
-	 * 2) If PHY is already up and TPI link status is also up (such as soft
-	 *    reboot), polling of TPI link status is not needed and SGMII AN is
-	 *    immediately retriggered.
-	 * 3) Other conditions such as PHY is down, speed change etc, skip
-	 *    retriggering SGMII AN. Note: in case of speed change, GPY FW will
-	 *    initiate SGMII AN.
-	 */
-
-	if (phydev->state != PHY_UP)
-		return 0;
-
-	ret = phy_read_poll_timeout(phydev, MII_BMSR, ret, ret & BMSR_LSTATUS,
-				    20000, 4000000, false);
-	if (ret == -ETIMEDOUT)
-		return 0;
-	else if (ret < 0)
-		return ret;
-
-	/* Trigger SGMII AN. */
-	return phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-			      VSPEC1_SGMII_CTRL_ANRS, VSPEC1_SGMII_CTRL_ANRS);
+	return 0;
 }
 
 static void gpy_update_interface(struct phy_device *phydev)
 {
-	int ret;
-
 	/* Interface mode is fixed for USXGMII and integrated PHY */
 	if (phydev->interface == PHY_INTERFACE_MODE_USXGMII ||
 	    phydev->interface == PHY_INTERFACE_MODE_INTERNAL)
@@ -271,29 +211,11 @@ static void gpy_update_interface(struct phy_device *phydev)
 	switch (phydev->speed) {
 	case SPEED_2500:
 		phydev->interface = PHY_INTERFACE_MODE_2500BASEX;
-		ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-				     VSPEC1_SGMII_CTRL_ANEN, 0);
-		if (ret < 0)
-			phydev_err(phydev,
-				   "Error: Disable of SGMII ANEG failed: %d\n",
-				   ret);
 		break;
 	case SPEED_1000:
 	case SPEED_100:
 	case SPEED_10:
 		phydev->interface = PHY_INTERFACE_MODE_SGMII;
-		if (gpy_sgmii_aneg_en(phydev))
-			break;
-		/* Enable and restart SGMII ANEG for 10/100/1000Mbps link speed
-		 * if ANEG is disabled (in 2500-BaseX mode).
-		 */
-		ret = phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_SGMII_CTRL,
-				     VSPEC1_SGMII_ANEN_ANRS,
-				     VSPEC1_SGMII_ANEN_ANRS);
-		if (ret < 0)
-			phydev_err(phydev,
-				   "Error: Enable of SGMII ANEG failed: %d\n",
-				   ret);
 		break;
 	}
 }

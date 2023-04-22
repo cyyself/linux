@@ -37,6 +37,7 @@ config NET_DSA_MT7530
 	tristate "MediaTek MT753x and MT7621 Ethernet switch support"
 	select NET_DSA_TAG_MTK
 	select MEDIATEK_GE_PHY
+	select PCS_MTK_LYNXI
 	help
 	  This enables support for the MediaTek MT7530, MT7531, and MT7621
 	  Ethernet switch chips.
@@ -59,14 +60,6 @@ source "drivers/net/dsa/qca/Kconfig"
 source "drivers/net/dsa/sja1105/Kconfig"
 
 source "drivers/net/dsa/xrs700x/Kconfig"
-
-config NET_DSA_QCA8K
-	tristate "Qualcomm Atheros QCA8K Ethernet switch family support"
-	select NET_DSA_TAG_QCA
-	select REGMAP
-	help
-	  This enables support for the Qualcomm Atheros QCA8K Ethernet
-	  switch chips.
 
 config NET_DSA_REALTEK_SMI
 	tristate "Realtek SMI Ethernet switch family support"

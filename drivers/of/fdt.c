@@ -1158,6 +1158,20 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 	p = of_get_flat_dt_prop(node, "bootargs", &l);
 	if (p != NULL && l > 0)
 		strlcpy(data, p, min(l, COMMAND_LINE_SIZE));
+	p = of_get_flat_dt_prop(node, "bootargs-append", &l);
+	if (p != NULL && l > 0)
+		strlcat(data, p, min_t(int, strlen(data) + (int)l, COMMAND_LINE_SIZE));
+
+	/* CONFIG_CMDLINE_OVERRIDE is used to fallback to a different
+	 * device tree option of chosen/bootargs-override. This is
+	 * helpful on boards where u-boot sets bootargs, and is unable
+	 * to be modified.
+	 */
+#ifdef CONFIG_CMDLINE_OVERRIDE
+	p = of_get_flat_dt_prop(node, "bootargs-override", &l);
+	if (p != NULL && l > 0)
+		strlcpy(data, p, min((int)l, COMMAND_LINE_SIZE));
+#endif
 
 	/*
 	 * CONFIG_CMDLINE is meant to be a default in case nothing else
