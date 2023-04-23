@@ -66,6 +66,10 @@
 #define RTL8221B_PHYCR1_ALDPS_EN		BIT(2)
 #define RTL8221B_PHYCR1_ALDPS_XTAL_OFF_EN	BIT(12)
 
+#define RTL8221B_NR_LEDS				3
+#define RTL8221B_LED_LINK_SELECT		0xd032
+#define RTL8221B_LED_LINK_SELECT_OFFSET	0x2
+
 #define RTL8366RB_POWER_SAVE			0x15
 #define RTL8366RB_POWER_SAVE_ON			BIT(12)
 
@@ -885,6 +889,28 @@ static irqreturn_t rtl9000a_handle_interrupt(struct phy_device *phydev)
 	return IRQ_HANDLED;
 }
 
+static int rtl8221b_config_led(struct phy_device *phydev) {
+	struct device *node = &phydev->mdio.dev;
+	u32 link_select[RTL8221B_NR_LEDS];
+	int i, val;
+
+	val = device_property_read_u32_array(node, "realtek,led-link-select", 
+			link_select, RTL8221B_NR_LEDS);
+
+	if (val)
+		return 0;
+
+	for (i = 0; i < RTL8221B_NR_LEDS; i++) {
+		val = phy_write_mmd(phydev, RTL8221B_MMD_PHY_CTRL, 
+			RTL8221B_LED_LINK_SELECT + i * RTL8221B_LED_LINK_SELECT_OFFSET, 
+			link_select[i]);
+		if (val < 0)
+			return val;
+	}
+
+	return 0;
+}
+
 static int rtl8221b_config_init(struct phy_device *phydev)
 {
 	u16 option_mode;
@@ -932,7 +958,7 @@ static int rtl8221b_config_init(struct phy_device *phydev)
 	phy_read_mmd_poll_timeout(phydev, RTL8221B_MMD_SERDES_CTRL, 0x7587,
 				  val, !(val & BIT(0)), 500, 100000, false);
 
-	return 0;
+	return rtl8221b_config_led(phydev);
 }
 
 static struct phy_driver realtek_drvs[] = {
