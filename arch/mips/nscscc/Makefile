@@ -1,0 +1,1 @@
+obj-$(CONFIG_MACH_NSCSCC) += init.o prom.o irq.o

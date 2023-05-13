@@ -1,0 +1,3 @@
+platform-$(CONFIG_MACH_NSCSCC)	+= nscscc/
+cflags-$(CONFIG_MACH_NSCSCC)	+= -I$(srctree)/arch/mips/include/asm/mach-nscscc
+load-$(CONFIG_MACH_NSCSCC)	+= 0xffffffff80100000

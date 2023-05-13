@@ -962,6 +962,26 @@ config CAVIUM_OCTEON_SOC
 		Hikari
 	  Say Y here for most Octeon reference boards.
 
+config MACH_NSCSCC
+	bool "NSCSCC"
+	select BOOT_ELF32
+	select BOOT_RAW
+	select CEVT_R4K
+	select COMMON_CLK
+	select CSRC_R4K
+	select IRQ_MIPS_CPU
+	select LIBFDT
+	select MIPS_CPU_SCACHE
+	select SYS_HAS_EARLY_PRINTK
+	select SYS_HAS_CPU_MIPS32_R1
+	select SYS_SUPPORTS_32BIT_KERNEL
+	select SYS_SUPPORTS_LITTLE_ENDIAN
+	select USE_OF
+	select DMA_NONCOHERENT
+	select BUILTIN_DTB
+	help
+	  This option enables support for NSCSCC MIPS32 platforms
+
 endchoice
 
 source "arch/mips/alchemy/Kconfig"
