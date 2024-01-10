@@ -21,6 +21,7 @@
 #include <asm/kvm_vcpu_sbi.h>
 #include <asm/kvm_vcpu_timer.h>
 #include <asm/kvm_vcpu_pmu.h>
+#include <asm/kvm_vcpu_dbtr.h>
 
 #define KVM_MAX_VCPUS			1024
 
@@ -262,6 +263,8 @@ struct kvm_vcpu_arch {
 
 	/* 'static' configurations which are set only once */
 	struct kvm_vcpu_config cfg;
+	/* HW debug triggers context */
+	struct kvm_dbtr dbtr_context;
 };
 
 static inline void kvm_arch_sync_events(struct kvm *kvm) {}

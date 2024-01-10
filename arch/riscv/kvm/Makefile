@@ -32,3 +32,4 @@ kvm-y += aia.o
 kvm-y += aia_device.o
 kvm-y += aia_aplic.o
 kvm-y += aia_imsic.o
+kvm-$(CONFIG_HAVE_VIRT_HW_BREAKPOINT) += vcpu_dbtr.o vcpu_sbi_dbtr.o

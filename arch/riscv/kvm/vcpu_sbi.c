@@ -78,7 +78,21 @@ static const struct kvm_riscv_sbi_extension_entry sbi_ext[] = {
 		.ext_idx = KVM_RISCV_SBI_EXT_VENDOR,
 		.ext_ptr = &vcpu_sbi_ext_vendor,
 	},
+	{
+		.ext_idx = KVM_RISCV_SBI_EXT_DBTR,
+		.ext_ptr = &vcpu_sbi_ext_dbtr,
+	},
 };
+
+#ifdef CONFIG_HAVE_VIRT_HW_BREAKPOINT
+extern const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr;
+#else
+static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr = {
+	.extid_start = -1UL,
+	.extid_end = -1UL,
+	.handler = NULL,
+};
+#endif
 
 void kvm_riscv_vcpu_sbi_forward(struct kvm_vcpu *vcpu, struct kvm_run *run)
 {

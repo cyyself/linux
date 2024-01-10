@@ -37,4 +37,12 @@ config KVM
 
 	  If unsure, say N.
 
+config HAVE_VIRT_HW_BREAKPOINT
+	tristate "Virtualized HW breakpoint support"
+	depends on RISCV_SBI && HAVE_HW_BREAKPOINT
+	help
+	  Support for hardware breakpoint inside guest virtual machines.
+
+	  If unsure, say N.
+
 endif # VIRTUALIZATION

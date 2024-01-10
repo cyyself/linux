@@ -146,6 +146,8 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	 * NOTE: This must be the last thing to be initialized.
 	 */
 	kvm_riscv_vcpu_sbi_init(vcpu);
+	/* setup the debug triggers for guest */
+	kvm_riscv_vcpu_dbtr_init(vcpu);
 
 	/* Reset VCPU */
 	kvm_riscv_reset_vcpu(vcpu);
