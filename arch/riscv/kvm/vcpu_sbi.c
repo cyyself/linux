@@ -28,6 +28,16 @@ static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_pmu = {
 };
 #endif
 
+#ifdef CONFIG_HAVE_VIRT_HW_BREAKPOINT
+extern const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr;
+#else
+static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr = {
+	.extid_start = -1UL,
+	.extid_end = -1UL,
+	.handler = NULL,
+};
+#endif
+
 struct kvm_riscv_sbi_extension_entry {
 	enum KVM_RISCV_SBI_EXT_ID ext_idx;
 	const struct kvm_vcpu_sbi_extension *ext_ptr;
@@ -83,16 +93,6 @@ static const struct kvm_riscv_sbi_extension_entry sbi_ext[] = {
 		.ext_ptr = &vcpu_sbi_ext_dbtr,
 	},
 };
-
-#ifdef CONFIG_HAVE_VIRT_HW_BREAKPOINT
-extern const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr;
-#else
-static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_dbtr = {
-	.extid_start = -1UL,
-	.extid_end = -1UL,
-	.handler = NULL,
-};
-#endif
 
 void kvm_riscv_vcpu_sbi_forward(struct kvm_vcpu *vcpu, struct kvm_run *run)
 {
