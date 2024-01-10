@@ -28,6 +28,7 @@ enum riscv_regset {
 #endif
 #ifdef CONFIG_RISCV_ISA_V
 	REGSET_V,
+#endif
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	REGSET_HW_BREAK,
 	REGSET_HW_WATCH,
