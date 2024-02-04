@@ -176,7 +176,7 @@ bool riscv_ipi_have_virq_range(void)
 	return (ipi_virq_base) ? true : false;
 }
 
-DEFINE_STATIC_KEY_FALSE(riscv_ipi_for_rfence);
+DEFINE_STATIC_KEY_TRUE(riscv_ipi_for_rfence);
 EXPORT_SYMBOL_GPL(riscv_ipi_for_rfence);
 
 void riscv_ipi_set_virq_range(int virq, int nr, bool use_for_rfence)

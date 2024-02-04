@@ -52,9 +52,9 @@ bool riscv_ipi_have_virq_range(void);
 void riscv_ipi_set_virq_range(int virq, int nr, bool use_for_rfence);
 
 /* Check if we can use IPIs for remote FENCEs */
-DECLARE_STATIC_KEY_FALSE(riscv_ipi_for_rfence);
+DECLARE_STATIC_KEY_TRUE(riscv_ipi_for_rfence);
 #define riscv_use_ipi_for_rfence() \
-	static_branch_unlikely(&riscv_ipi_for_rfence)
+	static_branch_likely(&riscv_ipi_for_rfence)
 
 /* Check other CPUs stop or not */
 bool smp_crash_stop_failed(void);
@@ -111,7 +111,7 @@ static inline void riscv_ipi_set_virq_range(int virq, int nr,
 
 static inline bool riscv_use_ipi_for_rfence(void)
 {
-	return false;
+	return true;
 }
 
 #endif /* CONFIG_SMP */
