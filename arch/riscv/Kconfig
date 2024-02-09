@@ -372,15 +372,6 @@ config TUNE_GENERIC
 
 endchoice
 
-config HIGHMEM
-	bool "High Memory Support"
-	depends on MMU
-	select KMAP_LOCAL
-	default y
-	help
-	  Enable high memory support on riscv64 which uses supports
-	  max 39-bit virtual address spaces.
-
 config FORCE_MAX_ZONEORDER
 	int "Maximum zone order"
 	default 13
