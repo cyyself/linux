@@ -24,6 +24,7 @@ config SOC_SIFIVE
 
 config ARCH_SOPHGO
 	bool "Sophgo SoCs"
+	select I2C
 	help
 	  This enables support for Sophgo SoC platform hardware.
 
