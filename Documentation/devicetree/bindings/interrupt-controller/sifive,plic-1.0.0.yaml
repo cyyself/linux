@@ -69,6 +69,7 @@ properties:
               - sophgo,cv1812h-plic
               - sophgo,sg2042-plic
               - thead,th1520-plic
+              - canaan,k230-plic
           - const: thead,c900-plic
       - items:
           - const: sifive,plic-1.0.0
