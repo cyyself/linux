@@ -37,6 +37,7 @@ properties:
           - const: sifive,clint0        # SiFive CLINT v0 IP block
       - items:
           - enum:
+              - canaan,k230-clint
               - allwinner,sun20i-d1-clint
               - sophgo,cv1800b-clint
               - sophgo,cv1812h-clint
