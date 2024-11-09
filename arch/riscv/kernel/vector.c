@@ -40,7 +40,7 @@ int riscv_v_setup_vsize(void)
 	 * instead of probing the CSRs.
 	 */
 	if (thead_vlenb_of) {
-		this_vsize = thead_vlenb_of * 32;
+		riscv_v_vsize = thead_vlenb_of * 32;
 		return 0;
 	}
 
