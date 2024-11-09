@@ -10,11 +10,13 @@
 
 bool is_xtheadvector_supported(void)
 {
-	struct riscv_hwprobe pair;
+	struct riscv_hwprobe pair[2];
 
-	pair.key = RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0;
-	riscv_hwprobe(&pair, 1, 0, NULL, 0);
-	return pair.value & RISCV_HWPROBE_VENDOR_EXT_XTHEADVECTOR;
+	pair[0].key = RISCV_HWPROBE_KEY_MVENDORID;
+	pair[1].key = RISCV_HWPROBE_KEY_VENDOR_EXT_0;
+	riscv_hwprobe(pair, 2, 0, NULL, 0);
+	return pair[0].value == RISCV_HWPROBE_MVENDORID_THEAD
+	    && pair[1].value & RISCV_HWPROBE_VENDOR_EXT_XTHEADVECTOR;
 }
 
 bool is_vector_supported(void)

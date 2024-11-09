@@ -169,6 +169,34 @@ static bool hwprobe_ext0_has(const struct cpumask *cpus, unsigned long ext)
 	return (pair.value & ext);
 }
 
+static void hwprobe_vendor_ext0(struct riscv_hwprobe *pair,
+				const struct cpumask *cpus)
+{
+	int cpu;
+	unsigned long mvendorid = -1UL;
+	for_each_cpu(cpu, cpus) {
+		unsigned long cpu_mvendorid = riscv_cached_mvendorid(cpu);
+
+		if (mvendorid == -1UL)
+			mvendorid = cpu_mvendorid;
+
+		if (mvendorid != cpu_mvendorid) {
+			/* If this query contains multiple CPUs vendor IDs,
+			   the value is set to 0. */
+			pair->value = 0;
+			return;
+		}
+	}
+
+	switch (mvendorid) {
+	case THEAD_VENDOR_ID:
+		hwprobe_isa_vendor_ext_thead_0(pair, cpus);
+		break;
+	default:
+		pair->value = 0;
+	}
+}
+
 #if defined(CONFIG_RISCV_PROBE_UNALIGNED_ACCESS)
 static u64 hwprobe_misaligned(const struct cpumask *cpus)
 {
@@ -287,8 +315,8 @@ static void hwprobe_one_pair(struct riscv_hwprobe *pair,
 		pair->value = riscv_timebase;
 		break;
 
-	case RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0:
-		hwprobe_isa_vendor_ext_thead_0(pair, cpus);
+	case RISCV_HWPROBE_KEY_VENDOR_EXT_0:
+		hwprobe_vendor_ext0(pair, cpus);
 		break;
 
 	/*
