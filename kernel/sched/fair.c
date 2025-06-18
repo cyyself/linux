@@ -1267,6 +1267,7 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	struct mm_struct *mm = p->mm;
 	struct mm_sched *pcpu_sched;
 	unsigned long epoch;
+	int mm_sched_llc = -1;
 
 	/*
 	 * init_task and kthreads don't be having no mm
@@ -1293,6 +1294,12 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 		mm->mm_sched_cpu = -1;
 		pcpu_sched->occ = 0;
 	}
+
+	if (mm->mm_sched_cpu != -1)
+		mm_sched_llc = per_cpu(sd_llc_id, mm->mm_sched_cpu);
+
+	if (p->preferred_llc != mm_sched_llc)
+		p->preferred_llc = mm_sched_llc;
 }
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p)
