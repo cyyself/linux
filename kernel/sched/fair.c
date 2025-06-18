@@ -1195,6 +1195,18 @@ static inline int llc_idx(int cpu)
 	return per_cpu(sd_llc_idx, cpu);
 }
 
+static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
+{
+	rq->nr_llc_running += (p->preferred_llc != -1);
+	rq->nr_pref_llc_running += (p->preferred_llc == task_llc(p));
+}
+
+static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
+{
+	rq->nr_llc_running -= (p->preferred_llc != -1);
+	rq->nr_pref_llc_running -= (p->preferred_llc == task_llc(p));
+}
+
 void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched)
 {
 	unsigned long epoch;
@@ -1298,8 +1310,11 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	if (mm->mm_sched_cpu != -1)
 		mm_sched_llc = per_cpu(sd_llc_id, mm->mm_sched_cpu);
 
-	if (p->preferred_llc != mm_sched_llc)
+	if (p->preferred_llc != mm_sched_llc) {
+		account_llc_dequeue(rq, p);
 		p->preferred_llc = mm_sched_llc;
+		account_llc_enqueue(rq, p);
+	}
 }
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p)
@@ -1400,6 +1415,14 @@ void init_sched_mm(struct task_struct *p)
 	work->next = work;
 }
 
+void reset_llc_stats(struct rq *rq)
+{
+	if (rq->nr_llc_running)
+		rq->nr_llc_running = 0;
+
+	rq->nr_pref_llc_running = 0;
+}
+
 #else
 
 static inline void account_mm_sched(struct rq *rq, struct task_struct *p,
@@ -1410,6 +1433,17 @@ void init_sched_mm(struct task_struct *p) { }
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p) { }
 
+static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
+{
+}
+
+static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
+{
+}
+
+void reset_llc_stats(struct rq *rq)
+{
+}
 #endif
 
 static inline
@@ -3949,6 +3983,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		struct rq *rq = rq_of(cfs_rq);
 
 		account_numa_enqueue(rq, task_of(se));
+		account_llc_enqueue(rq, task_of(se));
 		list_add(&se->group_node, &rq->cfs_tasks);
 	}
 #endif
@@ -3962,10 +3997,15 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #ifdef CONFIG_SMP
 	if (entity_is_task(se)) {
 		account_numa_dequeue(rq_of(cfs_rq), task_of(se));
+		account_llc_dequeue(rq_of(cfs_rq), task_of(se));
 		list_del_init(&se->group_node);
 	}
 #endif
 	cfs_rq->nr_queued--;
+
+	/* safeguard? */
+	if (!parent_entity(se) && !cfs_rq->nr_queued)
+		reset_llc_stats(rq_of(cfs_rq));
 }
 
 /*
