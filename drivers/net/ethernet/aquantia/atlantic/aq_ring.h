@@ -19,6 +19,8 @@
 struct page;
 struct aq_nic_cfg_s;
 
+struct page_pool;
+
 struct aq_rxpage {
 	struct page *page;
 	dma_addr_t daddr;
@@ -152,6 +154,7 @@ struct aq_ring_s {
 	struct bpf_prog *xdp_prog;
 	enum atl_ring_type ring_type;
 	struct xdp_rxq_info xdp_rxq;
+	struct page_pool *page_pool;
 };
 
 struct aq_ring_param_s {
