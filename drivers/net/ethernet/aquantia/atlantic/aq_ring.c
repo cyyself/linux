@@ -15,10 +15,47 @@
 #include "aq_main.h"
 
 #include <net/xdp.h>
+#include <net/page_pool/helpers.h>
 #include <linux/filter.h>
 #include <linux/bpf_trace.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/device.h>
+
+static inline unsigned int aq_ring_rx_alloc_size(const struct aq_ring_s *ring)
+{
+	return ring->frame_max + ring->tail_size + ring->page_offset;
+}
+
+static int aq_ring_create_page_pool(struct aq_ring_s *ring)
+{
+	struct aq_nic_s *aq_nic = ring->aq_nic;
+	struct device *dev = aq_nic_get_dev(aq_nic);
+	struct page_pool_params pp_params = {
+		.order = ring->page_order,
+		.pool_size = ring->size,
+		.nid = dev_to_node(dev),
+		.dev = dev,
+		.napi = NULL,
+		.dma_dir = READ_ONCE(ring->xdp_prog) ?
+			   DMA_BIDIRECTIONAL : DMA_FROM_DEVICE,
+		.max_len = aq_ring_rx_alloc_size(ring),
+		.offset = ring->page_offset,
+		.netdev = aq_nic->ndev,
+		.queue_idx = ring->idx,
+		.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV
+	};
+
+	ring->page_pool = page_pool_create(&pp_params);
+	if (IS_ERR(ring->page_pool)) {
+		int err = PTR_ERR(ring->page_pool);
+
+		ring->page_pool = NULL;
+		return err;
+	}
+
+	return 0;
+}
 
 static void aq_get_rxpages_xdp(struct aq_ring_buff_s *buff,
 			       struct xdp_buff *xdp)
@@ -31,105 +68,71 @@ static void aq_get_rxpages_xdp(struct aq_ring_buff_s *buff,
 
 		for (i = 0; i < sinfo->nr_frags; i++) {
 			skb_frag_t *frag = &sinfo->frags[i];
-
-			page_ref_inc(skb_frag_page(frag));
+			page_pool_ref_page(skb_frag_page(frag));
 		}
 	}
-	page_ref_inc(buff->rxdata.page);
+
+	page_pool_ref_page(buff->rxdata.page);
 }
 
-static inline void aq_free_rxpage(struct aq_rxpage *rxpage, struct device *dev)
+static inline void aq_free_rxpage(struct aq_ring_s *ring,
+				  struct aq_ring_buff_s *buff,
+				  unsigned int sync_len,
+				  bool allow_direct)
 {
-	unsigned int len = PAGE_SIZE << rxpage->order;
+	if (!ring->page_pool || !buff->rxdata.page)
+		return;
 
-	dma_unmap_page(dev, rxpage->daddr, len, DMA_FROM_DEVICE);
-
-	/* Drop the ref for being in the ring. */
-	__free_pages(rxpage->page, rxpage->order);
-	rxpage->page = NULL;
+	page_pool_put_page(ring->page_pool, buff->rxdata.page,
+				 sync_len, allow_direct);
+	buff->rxdata.page = NULL;
 }
 
-static int aq_alloc_rxpages(struct aq_rxpage *rxpage, struct aq_ring_s *rx_ring)
+static int aq_alloc_rxpages(struct aq_ring_s *ring, struct aq_ring_buff_s *buff)
 {
-	struct device *dev = aq_nic_get_dev(rx_ring->aq_nic);
-	unsigned int order = rx_ring->page_order;
+	struct page_pool *pp = ring->page_pool;
+	unsigned int alloc_size = aq_ring_rx_alloc_size(ring);
+	unsigned int offset = 0;
 	struct page *page;
-	int ret = -ENOMEM;
-	dma_addr_t daddr;
 
-	page = dev_alloc_pages(order);
+	if (unlikely(!pp))
+		return -ENOMEM;
+
+	page = page_pool_dev_alloc_frag(pp, &offset, alloc_size);
 	if (unlikely(!page))
-		goto err_exit;
+		return -ENOMEM;
 
-	daddr = dma_map_page(dev, page, 0, PAGE_SIZE << order,
-			     DMA_FROM_DEVICE);
-
-	if (unlikely(dma_mapping_error(dev, daddr)))
-		goto free_page;
-
-	rxpage->page = page;
-	rxpage->daddr = daddr;
-	rxpage->order = order;
-	rxpage->pg_off = rx_ring->page_offset;
+	buff->rxdata.page = page;
+	buff->rxdata.daddr = page_pool_get_dma_addr(page);
+	buff->rxdata.order = ring->page_order;
+	buff->rxdata.pg_off = offset + ring->page_offset;
+	buff->flags = 0U;
+	buff->len = ring->frame_max;
+	buff->is_cleaned = 0;
+	buff->pa = buff->rxdata.daddr + buff->rxdata.pg_off;
 
 	return 0;
-
-free_page:
-	__free_pages(page, order);
-
-err_exit:
-	return ret;
 }
 
-static int aq_get_rxpages(struct aq_ring_s *self, struct aq_ring_buff_s *rxbuf)
+
+static void aq_ring_release_rx_chain(struct aq_ring_s *ring,
+				     struct aq_ring_buff_s *buff,
+				     bool allow_direct)
 {
-	unsigned int order = self->page_order;
-	u16 page_offset = self->page_offset;
-	u16 frame_max = self->frame_max;
-	u16 tail_size = self->tail_size;
-	int ret;
+	struct aq_ring_buff_s *cur = buff;
 
-	if (rxbuf->rxdata.page) {
-		/* One means ring is the only user and can reuse */
-		if (page_ref_count(rxbuf->rxdata.page) > 1) {
-			/* Try reuse buffer */
-			rxbuf->rxdata.pg_off += frame_max + page_offset +
-						tail_size;
-			if (rxbuf->rxdata.pg_off + frame_max + tail_size <=
-			    (PAGE_SIZE << order)) {
-				u64_stats_update_begin(&self->stats.rx.syncp);
-				self->stats.rx.pg_flips++;
-				u64_stats_update_end(&self->stats.rx.syncp);
+	while (cur) {
+		aq_free_rxpage(ring, cur,
+				     aq_ring_rx_alloc_size(ring),
+				     allow_direct);
+		cur->is_cleaned = true;
 
-			} else {
-				/* Buffer exhausted. We have other users and
-				 * should release this page and realloc
-				 */
-				aq_free_rxpage(&rxbuf->rxdata,
-					       aq_nic_get_dev(self->aq_nic));
-				u64_stats_update_begin(&self->stats.rx.syncp);
-				self->stats.rx.pg_losts++;
-				u64_stats_update_end(&self->stats.rx.syncp);
-			}
-		} else {
-			rxbuf->rxdata.pg_off = page_offset;
-			u64_stats_update_begin(&self->stats.rx.syncp);
-			self->stats.rx.pg_reuses++;
-			u64_stats_update_end(&self->stats.rx.syncp);
-		}
+		if (cur->is_eop)
+			break;
+		if (cur->next >= ring->size)
+			break;
+		cur = &ring->buff_ring[cur->next];
 	}
-
-	if (!rxbuf->rxdata.page) {
-		ret = aq_alloc_rxpages(&rxbuf->rxdata, self);
-		if (ret) {
-			u64_stats_update_begin(&self->stats.rx.syncp);
-			self->stats.rx.alloc_fails++;
-			u64_stats_update_end(&self->stats.rx.syncp);
-		}
-		return ret;
-	}
-
-	return 0;
 }
 
 static int aq_ring_alloc(struct aq_ring_s *self,
@@ -179,12 +182,15 @@ int aq_ring_rx_alloc(struct aq_ring_s *self,
 		     unsigned int idx,
 		     struct aq_nic_cfg_s *aq_nic_cfg)
 {
+	int err;
+
 	self->aq_nic = aq_nic;
 	self->idx = idx;
 	self->size = aq_nic_cfg->rxds;
 	self->dx_size = aq_nic_cfg->aq_hw_caps->rxd_size;
 	self->xdp_prog = aq_nic->xdp_prog;
 	self->frame_max = AQ_CFG_RX_FRAME_MAX;
+	self->page_pool = NULL;
 
 	/* Only order-2 is allowed if XDP is enabled */
 	if (READ_ONCE(self->xdp_prog)) {
@@ -200,7 +206,17 @@ int aq_ring_rx_alloc(struct aq_ring_s *self,
 		self->tail_size = 0;
 	}
 
-	return aq_ring_alloc(self, aq_nic);
+	err = aq_ring_alloc(self, aq_nic);
+	if (err)
+		return err;
+
+	err = aq_ring_create_page_pool(self);
+	if (err) {
+		aq_ring_free(self);
+		return err;
+	}
+
+	return 0;
 }
 
 int
@@ -398,6 +414,7 @@ static struct sk_buff *aq_xdp_build_skb(struct xdp_buff *xdp,
 	if (!skb)
 		return NULL;
 
+	skb_mark_for_recycle(skb);
 	aq_get_rxpages_xdp(buff, xdp);
 	return skb;
 }
@@ -481,8 +498,7 @@ out_aborted:
 	return ERR_PTR(-result);
 }
 
-static bool aq_add_rx_fragment(struct device *dev,
-			       struct aq_ring_s *ring,
+static bool aq_add_rx_fragment(struct aq_ring_s *ring,
 			       struct aq_ring_buff_s *buff,
 			       struct xdp_buff *xdp)
 {
@@ -498,15 +514,15 @@ static bool aq_add_rx_fragment(struct device *dev,
 
 		frag = &sinfo->frags[sinfo->nr_frags++];
 		buff_ = &ring->buff_ring[buff_->next];
-		dma_sync_single_range_for_cpu(dev,
-					      buff_->rxdata.daddr,
-					      buff_->rxdata.pg_off,
-					      buff_->len,
-					      DMA_FROM_DEVICE);
+		page_pool_dma_sync_for_cpu(ring->page_pool,
+					    buff_->rxdata.page,
+					    buff_->rxdata.pg_off,
+					    buff_->len);
 		sinfo->xdp_frags_size += buff_->len;
 		skb_frag_fill_page_desc(frag, buff_->rxdata.page,
 					buff_->rxdata.pg_off,
 					buff_->len);
+		page_pool_ref_page(buff_->rxdata.page);
 
 		buff_->is_cleaned = 1;
 
@@ -577,21 +593,10 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 
 			if (buff->is_error ||
 			    (buff->is_lro && buff->is_cso_err)) {
-				buff_ = buff;
-				do {
-					if (buff_->next >= self->size) {
-						err = -EIO;
-						goto err_exit;
-					}
-					next_ = buff_->next;
-					buff_ = &self->buff_ring[next_];
-
-					buff_->is_cleaned = true;
-				} while (!buff_->is_eop);
-
 				u64_stats_update_begin(&self->stats.rx.syncp);
 				++self->stats.rx.errors;
 				u64_stats_update_end(&self->stats.rx.syncp);
+				aq_ring_release_rx_chain(self, buff, true);
 				continue;
 			}
 		}
@@ -600,13 +605,14 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 			u64_stats_update_begin(&self->stats.rx.syncp);
 			++self->stats.rx.errors;
 			u64_stats_update_end(&self->stats.rx.syncp);
+			aq_ring_release_rx_chain(self, buff, true);
 			continue;
 		}
 
-		dma_sync_single_range_for_cpu(aq_nic_get_dev(self->aq_nic),
-					      buff->rxdata.daddr,
-					      buff->rxdata.pg_off,
-					      buff->len, DMA_FROM_DEVICE);
+		page_pool_dma_sync_for_cpu(self->page_pool,
+					   buff->rxdata.page,
+					   buff->rxdata.pg_off,
+					   buff->len);
 
 		skb = napi_alloc_skb(napi, AQ_CFG_RX_HDR_SIZE);
 		if (unlikely(!skb)) {
@@ -616,6 +622,7 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 			err = -ENOMEM;
 			goto err_exit;
 		}
+		skb_mark_for_recycle(skb);
 		if (is_ptp_ring)
 			buff->len -=
 				aq_ptp_extract_ts(self->aq_nic, skb_hwtstamps(skb),
@@ -636,7 +643,7 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 					buff->rxdata.pg_off + hdr_len,
 					buff->len - hdr_len,
 					self->frame_max);
-			page_ref_inc(buff->rxdata.page);
+			page_pool_ref_page(buff->rxdata.page);
 		}
 
 		if (!buff->is_eop) {
@@ -645,17 +652,16 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 				next_ = buff_->next;
 				buff_ = &self->buff_ring[next_];
 
-				dma_sync_single_range_for_cpu(aq_nic_get_dev(self->aq_nic),
-							      buff_->rxdata.daddr,
-							      buff_->rxdata.pg_off,
-							      buff_->len,
-							      DMA_FROM_DEVICE);
+			page_pool_dma_sync_for_cpu(self->page_pool,
+						   buff_->rxdata.page,
+						   buff_->rxdata.pg_off,
+						   buff_->len);
 				skb_add_rx_frag(skb, i++,
 						buff_->rxdata.page,
 						buff_->rxdata.pg_off,
 						buff_->len,
 						self->frame_max);
-				page_ref_inc(buff_->rxdata.page);
+				page_pool_ref_page(buff_->rxdata.page);
 				buff_->is_cleaned = 1;
 
 				buff->is_ip_cso &= buff_->is_ip_cso;
@@ -689,6 +695,8 @@ static int __aq_ring_rx_clean(struct aq_ring_s *self, struct napi_struct *napi,
 		u64_stats_update_end(&self->stats.rx.syncp);
 
 		napi_gro_receive(napi, skb);
+
+		aq_ring_release_rx_chain(self, buff, true);
 	}
 
 err_exit:
@@ -699,14 +707,10 @@ static int __aq_ring_xdp_clean(struct aq_ring_s *rx_ring,
 			       struct napi_struct *napi, int *work_done,
 			       int budget)
 {
-	int frame_sz = rx_ring->page_offset + rx_ring->frame_max +
-		       rx_ring->tail_size;
+	int frame_sz = aq_ring_rx_alloc_size(rx_ring);
 	struct aq_nic_s *aq_nic = rx_ring->aq_nic;
 	bool is_rsc_completed = true;
-	struct device *dev;
 	int err = 0;
-
-	dev = aq_nic_get_dev(aq_nic);
 	for (; (rx_ring->sw_head != rx_ring->hw_head) && budget;
 		rx_ring->sw_head = aq_ring_next_dx(rx_ring, rx_ring->sw_head),
 		--budget, ++(*work_done)) {
@@ -750,21 +754,10 @@ static int __aq_ring_xdp_clean(struct aq_ring_s *rx_ring,
 			}
 			if (buff->is_error ||
 			    (buff->is_lro && buff->is_cso_err)) {
-				buff_ = buff;
-				do {
-					if (buff_->next >= rx_ring->size) {
-						err = -EIO;
-						goto err_exit;
-					}
-					next_ = buff_->next;
-					buff_ = &rx_ring->buff_ring[next_];
-
-					buff_->is_cleaned = true;
-				} while (!buff_->is_eop);
-
 				u64_stats_update_begin(&rx_ring->stats.rx.syncp);
 				++rx_ring->stats.rx.errors;
 				u64_stats_update_end(&rx_ring->stats.rx.syncp);
+				aq_ring_release_rx_chain(rx_ring, buff, true);
 				continue;
 			}
 		}
@@ -773,13 +766,14 @@ static int __aq_ring_xdp_clean(struct aq_ring_s *rx_ring,
 			u64_stats_update_begin(&rx_ring->stats.rx.syncp);
 			++rx_ring->stats.rx.errors;
 			u64_stats_update_end(&rx_ring->stats.rx.syncp);
+			aq_ring_release_rx_chain(rx_ring, buff, true);
 			continue;
 		}
 
-		dma_sync_single_range_for_cpu(dev,
-					      buff->rxdata.daddr,
-					      buff->rxdata.pg_off,
-					      buff->len, DMA_FROM_DEVICE);
+		page_pool_dma_sync_for_cpu(rx_ring->page_pool,
+					   buff->rxdata.page,
+					   buff->rxdata.pg_off,
+					   buff->len);
 		hard_start = page_address(buff->rxdata.page) +
 			     buff->rxdata.pg_off - rx_ring->page_offset;
 
@@ -794,19 +788,22 @@ static int __aq_ring_xdp_clean(struct aq_ring_s *rx_ring,
 		xdp_prepare_buff(&xdp, hard_start, rx_ring->page_offset,
 				 buff->len, false);
 		if (!buff->is_eop) {
-			if (aq_add_rx_fragment(dev, rx_ring, buff, &xdp)) {
+			if (aq_add_rx_fragment(rx_ring, buff, &xdp)) {
 				u64_stats_update_begin(&rx_ring->stats.rx.syncp);
 				++rx_ring->stats.rx.packets;
 				rx_ring->stats.rx.bytes += xdp_get_buff_len(&xdp);
 				++rx_ring->stats.rx.xdp_aborted;
 				u64_stats_update_end(&rx_ring->stats.rx.syncp);
+				aq_ring_release_rx_chain(rx_ring, buff, true);
 				continue;
 			}
 		}
 
 		skb = aq_xdp_run_prog(aq_nic, &xdp, rx_ring, buff);
-		if (IS_ERR(skb) || !skb)
+		if (IS_ERR(skb) || !skb) {
+			aq_ring_release_rx_chain(rx_ring, buff, true);
 			continue;
+		}
 
 		if (ptp_hwtstamp_len > 0)
 			*skb_hwtstamps(skb) = shhwtstamps;
@@ -827,6 +824,7 @@ static int __aq_ring_xdp_clean(struct aq_ring_s *rx_ring,
 								   rx_ring->idx));
 
 		napi_gro_receive(napi, skb);
+		aq_ring_release_rx_chain(rx_ring, buff, true);
 	}
 
 err_exit:
@@ -875,15 +873,16 @@ int aq_ring_rx_fill(struct aq_ring_s *self)
 		self->sw_tail = aq_ring_next_dx(self, self->sw_tail)) {
 		buff = &self->buff_ring[self->sw_tail];
 
-		buff->flags = 0U;
-		buff->len = self->frame_max;
+		if (buff->rxdata.page)
+			aq_free_rxpage(self, buff, self->frame_max, true);
 
-		err = aq_get_rxpages(self, buff);
-		if (err)
+		err = aq_alloc_rxpages(self, buff);
+		if (err) {
+			u64_stats_update_begin(&self->stats.rx.syncp);
+			self->stats.rx.alloc_fails++;
+			u64_stats_update_end(&self->stats.rx.syncp);
 			goto err_exit;
-
-		buff->pa = aq_buf_daddr(&buff->rxdata);
-		buff = NULL;
+		}
 	}
 
 err_exit:
@@ -899,7 +898,7 @@ void aq_ring_rx_deinit(struct aq_ring_s *self)
 		self->sw_head = aq_ring_next_dx(self, self->sw_head)) {
 		struct aq_ring_buff_s *buff = &self->buff_ring[self->sw_head];
 
-		aq_free_rxpage(&buff->rxdata, aq_nic_get_dev(self->aq_nic));
+		aq_free_rxpage(self, buff, aq_ring_rx_alloc_size(self), false);
 	}
 }
 
@@ -907,6 +906,11 @@ void aq_ring_free(struct aq_ring_s *self)
 {
 	if (!self)
 		return;
+
+	if (self->page_pool) {
+		page_pool_destroy(self->page_pool);
+		self->page_pool = NULL;
+	}
 
 	kfree(self->buff_ring);
 	self->buff_ring = NULL;
