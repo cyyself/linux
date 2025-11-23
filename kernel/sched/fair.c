@@ -9852,8 +9852,8 @@ static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
  * Check if task p can migrate from source LLC to
  * destination LLC in terms of cache aware load balance.
  */
-static __maybe_unused enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
-							struct task_struct *p)
+static enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
+					 struct task_struct *p)
 {
 	struct mm_struct *mm;
 	bool to_pref;
@@ -10025,6 +10025,13 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	if (env->flags & LBF_ACTIVE_LB)
 		return 1;
 
+#ifdef CONFIG_SCHED_CACHE
+	if (sched_cache_enabled() &&
+	    can_migrate_llc_task(env->src_cpu, env->dst_cpu, p) == mig_forbid &&
+	    !task_has_sched_core(p))
+		return 0;
+#endif
+
 	degrades = migrate_degrades_locality(p, env);
 	if (!degrades)
 		hot = task_hot(p, env);
@@ -10146,11 +10153,54 @@ static struct list_head
 	list_splice(&pref_old_llc, tasks);
 	return tasks;
 }
+
+static bool stop_migrate_src_rq(struct task_struct *p,
+				struct lb_env *env,
+				int detached)
+{
+	if (!sched_cache_enabled() || p->preferred_llc == -1 ||
+	    cpus_share_cache(env->src_cpu, env->dst_cpu) ||
+	    env->sd->nr_balance_failed)
+		return false;
+
+	/*
+	 * Stop migration for the src_rq and pull from a
+	 * different busy runqueue in the following cases:
+	 *
+	 * 1. Trying to migrate task to its preferred
+	 *    LLC, but the chosen task does not prefer dest
+	 *    LLC - case 3 in order_tasks_by_llc(). This violates
+	 *    the goal of migrate_llc_task. However, we should
+	 *    stop detaching only if some tasks have been detached
+	 *    and the imbalance has been mitigated.
+	 *
+	 * 2. Don't detach more tasks if the remaining tasks want
+	 *    to stay. We know the remaining tasks all prefer the
+	 *    current LLC, because after order_tasks_by_llc(), the
+	 *    tasks that prefer the current LLC are the least favored
+	 *    candidates to be migrated out.
+	 */
+	if (env->migration_type == migrate_llc_task &&
+	    detached && llc_id(env->dst_cpu) != p->preferred_llc)
+		return true;
+
+	if (llc_id(env->src_cpu) == p->preferred_llc)
+		return true;
+
+	return false;
+}
 #else
 static inline struct list_head
 *order_tasks_by_llc(struct lb_env *env, struct list_head *tasks)
 {
 	return tasks;
+}
+
+static bool stop_migrate_src_rq(struct task_struct *p,
+				struct lb_env *env,
+				int detached)
+{
+	return false;
 }
 #endif
 
@@ -10204,6 +10254,15 @@ static int detach_tasks(struct lb_env *env)
 		}
 
 		p = list_last_entry(tasks, struct task_struct, se.group_node);
+
+		/*
+		 * Check if detaching current src_rq should be stopped, because
+		 * doing so would break cache aware load balance. If we stop
+		 * here, the env->flags has LBF_ALL_PINNED, which would cause
+		 * the load balance to pull from another busy runqueue.
+		 */
+		if (stop_migrate_src_rq(p, env, detached))
+			break;
 
 		if (!can_migrate_task(p, env))
 			goto next;
