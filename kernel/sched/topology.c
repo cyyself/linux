@@ -26,6 +26,49 @@ int max_llcs;
 
 static bool sched_cache_present;
 
+unsigned int llc_enabled = 1;
+DEFINE_STATIC_KEY_FALSE(sched_cache_on);
+
+/*
+ * Enable/disable cache aware scheduling according to
+ * user input and the presence of hardware support.
+ */
+static void _sched_cache_set(bool enable, bool locked)
+{
+	if (enable) {
+		if (locked)
+			static_branch_enable_cpuslocked(&sched_cache_on);
+		else
+			static_branch_enable(&sched_cache_on);
+	} else {
+		if (locked)
+			static_branch_disable_cpuslocked(&sched_cache_on);
+		else
+			static_branch_disable(&sched_cache_on);
+	}
+}
+
+void sched_cache_set(bool locked)
+{
+	/* hardware does not support */
+	if (!sched_cache_present) {
+		if (static_branch_likely(&sched_cache_on))
+			_sched_cache_set(false, locked);
+
+		return;
+	}
+
+	/* user wants it or not ?*/
+	if (llc_enabled) {
+		if (!static_branch_likely(&sched_cache_on))
+			_sched_cache_set(true, locked);
+
+	} else {
+		if (static_branch_likely(&sched_cache_on))
+			_sched_cache_set(false, locked);
+	}
+}
+
 static unsigned int *alloc_new_pref_llcs(unsigned int *old, unsigned int **gc)
 {
 	unsigned int *new = NULL;
@@ -70,8 +113,12 @@ static int resize_llc_pref(bool has_multi_llcs)
 	 * new buffer.
 	 */
 	tmp_llc_pref = alloc_percpu_noprof(unsigned int *);
-	if (!tmp_llc_pref)
-		return -ENOMEM;
+	if (!tmp_llc_pref) {
+		sched_cache_present = false;
+		ret = -ENOMEM;
+
+		goto out;
+	}
 
 	for_each_present_cpu(i)
 		*per_cpu_ptr(tmp_llc_pref, i) = NULL;
@@ -89,6 +136,7 @@ static int resize_llc_pref(bool has_multi_llcs)
 		new = alloc_new_pref_llcs(rq->nr_pref_llc, per_cpu_ptr(tmp_llc_pref, i));
 		if (!new) {
 			ret = -ENOMEM;
+			sched_cache_present = false;
 
 			goto release_old;
 		}
@@ -126,6 +174,8 @@ release_old:
 	if (!ret)
 		max_llcs = new_max_llcs;
 
+out:
+	sched_cache_set(true);
 	return ret;
 }
 
