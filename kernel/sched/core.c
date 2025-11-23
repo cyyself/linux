@@ -8800,6 +8800,7 @@ void __init sched_init(void)
 #ifdef CONFIG_SCHED_CACHE
 		raw_spin_lock_init(&rq->cpu_epoch_lock);
 		rq->cpu_epoch_next = jiffies;
+		rq->nr_pref_llc = NULL;
 #endif
 
 		zalloc_cpumask_var_node(&rq->scratch_mask, GFP_KERNEL, cpu_to_node(i));
