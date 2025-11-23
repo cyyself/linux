@@ -1210,10 +1210,17 @@ __read_mostly unsigned int llc_imb_pct            = 20;
 
 static int llc_id(int cpu)
 {
+	int llc;
+
 	if (cpu < 0)
 		return -1;
 
-	return per_cpu(sd_llc_id, cpu);
+	llc = per_cpu(sd_llc_id, cpu);
+	/* avoid race with cpu hotplug */
+	if (unlikely(llc >= max_llcs))
+		return -1;
+
+	return llc;
 }
 
 void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched)

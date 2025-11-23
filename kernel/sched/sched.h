@@ -2075,6 +2075,7 @@ DECLARE_PER_CPU(struct sched_domain __rcu *, sd_asym_cpucapacity);
 
 extern struct static_key_false sched_asym_cpucapacity;
 extern struct static_key_false sched_cluster_active;
+extern int max_llcs;
 
 static __always_inline bool sched_asym_cpucap_active(void)
 {

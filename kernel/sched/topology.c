@@ -17,6 +17,8 @@ void sched_domains_mutex_unlock(void)
 	mutex_unlock(&sched_domains_mutex);
 }
 
+int max_llcs;
+
 /* Protected by sched_domains_mutex: */
 static cpumask_var_t sched_domains_tmpmask;
 static cpumask_var_t sched_domains_tmpmask2;
@@ -668,6 +670,55 @@ DEFINE_PER_CPU(struct sched_domain __rcu *, sd_asym_cpucapacity);
 DEFINE_STATIC_KEY_FALSE(sched_asym_cpucapacity);
 DEFINE_STATIC_KEY_FALSE(sched_cluster_active);
 
+/*
+ * Assign continuous llc id for the CPU, and return
+ * the assigned llc id.
+ */
+static int update_llc_id(struct sched_domain *sd,
+			 int cpu)
+{
+	int id = per_cpu(sd_llc_id, cpu), i;
+
+	if (id >= 0)
+		return id;
+
+	if (sd) {
+		/* Look for any assigned id and reuse it.*/
+		for_each_cpu(i, sched_domain_span(sd)) {
+			id = per_cpu(sd_llc_id, i);
+
+			if (id >= 0) {
+				per_cpu(sd_llc_id, cpu) = id;
+				return id;
+			}
+		}
+	}
+
+	/*
+	 * When 1. there is no id assigned to this LLC domain,
+	 * or 2. the sd is NULL, we reach here.
+	 * Consider the following scenario,
+	 * CPU0~CPU95 are in the node0, CPU96~CPU191 are
+	 * in the node1. During bootup, maxcpus=96 is
+	 * appended.
+	 * case 1: When running cpu_attach_domain(CPU24)
+	 * during boot up, CPU24 is the first CPU in its
+	 * non-NULL LLC domain. However,
+	 * its corresponding llc id has not been assigned yet.
+	 *
+	 * case 2: After boot up, the CPU100 is brought up
+	 * via sysfs manually. As a result, CPU100 has only a
+	 * Numa domain attached, because CPU100 is the only CPU
+	 * of a sched domain, all its bottom domains are degenerated.
+	 * The LLC domain pointer sd is NULL for CPU100.
+	 *
+	 * For both cases, we want to increase the number of LLCs.
+	 */
+	per_cpu(sd_llc_id, cpu) = max_llcs++;
+
+	return per_cpu(sd_llc_id, cpu);
+}
+
 static void update_top_cache_domain(int cpu)
 {
 	struct sched_domain_shared *sds = NULL;
@@ -677,14 +728,13 @@ static void update_top_cache_domain(int cpu)
 
 	sd = highest_flag_domain(cpu, SD_SHARE_LLC);
 	if (sd) {
-		id = cpumask_first(sched_domain_span(sd));
 		size = cpumask_weight(sched_domain_span(sd));
 		sds = sd->shared;
 	}
 
 	rcu_assign_pointer(per_cpu(sd_llc, cpu), sd);
 	per_cpu(sd_llc_size, cpu) = size;
-	per_cpu(sd_llc_id, cpu) = id;
+	id = update_llc_id(sd, cpu);
 	rcu_assign_pointer(per_cpu(sd_llc_shared, cpu), sds);
 
 	sd = lowest_flag_domain(cpu, SD_CLUSTER);
@@ -2487,6 +2537,12 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 	int i, ret = -ENOMEM;
 	bool has_asym = false;
 	bool has_cluster = false;
+
+	/* first scan of LLCs */
+	if (!max_llcs) {
+		for_each_possible_cpu(i)
+			per_cpu(sd_llc_id, i) = -1;
+	}
 
 	if (WARN_ON(cpumask_empty(cpu_map)))
 		goto error;
