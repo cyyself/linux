@@ -1406,6 +1406,10 @@ struct task_struct {
 	unsigned long			numa_pages_migrated;
 #endif /* CONFIG_NUMA_BALANCING */
 
+#ifdef CONFIG_SCHED_CACHE
+	struct callback_head		cache_work;
+#endif
+
 #ifdef CONFIG_RSEQ
 	struct rseq __user *rseq;
 	u32 rseq_len;
@@ -2427,5 +2431,12 @@ extern void migrate_enable(void);
 #endif /* MODULE */
 
 DEFINE_LOCK_GUARD_0(migrate, migrate_disable(), migrate_enable())
+
+#ifdef CONFIG_SCHED_CACHE
+static inline bool sched_cache_enabled(void)
+{
+	return false;
+}
+#endif
 
 #endif
