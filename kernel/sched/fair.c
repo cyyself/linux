@@ -1223,6 +1223,43 @@ static int llc_id(int cpu)
 	return llc;
 }
 
+static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
+{
+	int pref_llc;
+
+	if (!sched_cache_enabled())
+		return;
+
+	pref_llc = p->preferred_llc;
+	if (pref_llc < 0)
+		return;
+
+	rq->nr_llc_running++;
+	rq->nr_pref_llc_running += (pref_llc == task_llc(p));
+	p->sched_llc_active = true;
+}
+
+static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
+{
+	int pref_llc;
+
+	/*
+	 * Borrow the uc_se->active from uclamp_rq_inc_id(),
+	 * uclamp_rq_dec_id() to avoid the unbalanced calculation
+	 * of rq statistics.
+	 */
+	if (unlikely(!p->sched_llc_active))
+		return;
+
+	pref_llc = p->preferred_llc;
+	if (pref_llc < 0)
+		return;
+
+	rq->nr_llc_running--;
+	rq->nr_pref_llc_running -= (pref_llc == task_llc(p));
+	p->sched_llc_active = false;
+}
+
 void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched)
 {
 	unsigned long epoch;
@@ -1294,6 +1331,8 @@ static unsigned long __no_profile fraction_mm_sched(struct rq *rq, struct mm_sch
 	return div64_u64(NICE_0_LOAD * pcpu_sched->runtime, rq->cpu_runtime + 1);
 }
 
+static unsigned int task_running_on_cpu(int cpu, struct task_struct *p);
+
 static inline
 void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 {
@@ -1346,8 +1385,13 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 #endif
 	}
 
-	if (p->preferred_llc != mm_sched_llc)
+	/* task not on rq accounted later in account_entity_enqueue() */
+	if (task_running_on_cpu(rq->cpu, p) &&
+	    p->preferred_llc != mm_sched_llc) {
+		account_llc_dequeue(rq, p);
 		p->preferred_llc = mm_sched_llc;
+		account_llc_enqueue(rq, p);
+	}
 }
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p)
@@ -1474,6 +1518,10 @@ static inline void account_mm_sched(struct rq *rq, struct task_struct *p,
 void init_sched_mm(struct task_struct *p) { }
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p) { }
+
+static void account_llc_enqueue(struct rq *rq, struct task_struct *p) {}
+
+static void account_llc_dequeue(struct rq *rq, struct task_struct *p) {}
 
 #endif
 
@@ -3965,9 +4013,11 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	update_load_add(&cfs_rq->load, se->load.weight);
 	if (entity_is_task(se)) {
+		struct task_struct *p = task_of(se);
 		struct rq *rq = rq_of(cfs_rq);
 
-		account_numa_enqueue(rq, task_of(se));
+		account_numa_enqueue(rq, p);
+		account_llc_enqueue(rq, p);
 		list_add(&se->group_node, &rq->cfs_tasks);
 	}
 	cfs_rq->nr_queued++;
@@ -3978,7 +4028,11 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	update_load_sub(&cfs_rq->load, se->load.weight);
 	if (entity_is_task(se)) {
-		account_numa_dequeue(rq_of(cfs_rq), task_of(se));
+		struct task_struct *p = task_of(se);
+		struct rq *rq = rq_of(cfs_rq);
+
+		account_numa_dequeue(rq, p);
+		account_llc_dequeue(rq, p);
 		list_del_init(&se->group_node);
 	}
 	cfs_rq->nr_queued--;
