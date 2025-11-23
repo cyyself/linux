@@ -12684,6 +12684,7 @@ static void update_lb_imbalance_stat(struct lb_env *env, struct sched_domain *sd
 		__schedstat_add(sd->lb_imbalance_misfit[idle], env->imbalance);
 		break;
 	case migrate_llc_task:
+		__schedstat_add(sd->lb_imbalance_llc[idle], env->imbalance);
 		break;
 	}
 }

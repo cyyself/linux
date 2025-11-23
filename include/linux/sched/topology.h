@@ -108,6 +108,7 @@ struct sched_domain {
 	unsigned int lb_imbalance_util[CPU_MAX_IDLE_TYPES];
 	unsigned int lb_imbalance_task[CPU_MAX_IDLE_TYPES];
 	unsigned int lb_imbalance_misfit[CPU_MAX_IDLE_TYPES];
+	unsigned int lb_imbalance_llc[CPU_MAX_IDLE_TYPES];
 	unsigned int lb_gained[CPU_MAX_IDLE_TYPES];
 	unsigned int lb_hot_gained[CPU_MAX_IDLE_TYPES];
 	unsigned int lb_nobusyg[CPU_MAX_IDLE_TYPES];
