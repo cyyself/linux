@@ -1411,6 +1411,8 @@ struct task_struct {
 
 #ifdef CONFIG_SCHED_CACHE
 	struct callback_head		cache_work;
+	/*the p is currently refcounted in a rq's preferred llc stats*/
+	bool				sched_llc_active;
 	int				preferred_llc;
 #endif
 
