@@ -1421,11 +1421,11 @@ static void task_tick_cache(struct rq *rq, struct task_struct *p)
 
 static void __no_profile task_cache_work(struct callback_head *work)
 {
-	struct task_struct *p = current;
+	struct task_struct *p = current, *cur;
 	struct mm_struct *mm = p->mm;
 	unsigned long m_a_occ = 0;
 	unsigned long curr_m_a_occ = 0;
-	int cpu, m_a_cpu = -1;
+	int cpu, m_a_cpu = -1, nr_running = 0;
 	cpumask_var_t cpus;
 
 	WARN_ON_ONCE(work != &p->cache_work);
@@ -1458,6 +1458,12 @@ static void __no_profile task_cache_work(struct callback_head *work)
 					m_occ = occ;
 					m_cpu = i;
 				}
+				rcu_read_lock();
+				cur = rcu_dereference(cpu_rq(i)->curr);
+				if (cur && !(cur->flags & (PF_EXITING | PF_KTHREAD)) &&
+				    cur->mm == mm)
+					nr_running++;
+				rcu_read_unlock();
 			}
 
 			/*
@@ -1501,6 +1507,7 @@ static void __no_profile task_cache_work(struct callback_head *work)
 		mm->mm_sched_cpu = m_a_cpu;
 	}
 
+	update_avg(&mm->nr_running_avg, nr_running);
 	free_cpumask_var(cpus);
 }
 
