@@ -1217,11 +1217,12 @@ static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
 		return;
 
 	pref_llc = p->preferred_llc;
-	if (pref_llc < 0)
+	if (pref_llc < 0 || pref_llc >= max_llcs)
 		return;
 
 	rq->nr_llc_running++;
 	rq->nr_pref_llc_running += (pref_llc == task_llc(p));
+	rq->nr_pref_llc[pref_llc]++;
 	p->sched_llc_active = true;
 }
 
@@ -1238,11 +1239,12 @@ static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 		return;
 
 	pref_llc = p->preferred_llc;
-	if (pref_llc < 0)
+	if (pref_llc < 0 || pref_llc >= max_llcs)
 		return;
 
 	rq->nr_llc_running--;
 	rq->nr_pref_llc_running -= (pref_llc == task_llc(p));
+	rq->nr_pref_llc[pref_llc]--;
 	p->sched_llc_active = false;
 }
 
