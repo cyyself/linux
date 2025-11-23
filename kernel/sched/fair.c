@@ -10487,6 +10487,16 @@ static void attach_task(struct rq *rq, struct task_struct *p)
 {
 	lockdep_assert_rq_held(rq);
 
+#ifdef CONFIG_SCHED_CACHE
+	if (p->mm) {
+		int pref_cpu = p->mm->mm_sched_cpu;
+
+		trace_sched_attach_task(p,
+					pref_cpu,
+					pref_cpu != -1 ? llc_id(pref_cpu) : -1,
+					cpu_of(rq), llc_id(cpu_of(rq)));
+	}
+#endif
 	WARN_ON_ONCE(task_rq(p) != rq);
 	activate_task(rq, p, ENQUEUE_NOCLOCK);
 	wakeup_preempt(rq, p, 0);
