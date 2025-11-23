@@ -944,6 +944,10 @@ struct mm_sched {
 	unsigned long epoch;
 };
 
+struct mm_time {
+	u64 runtime_ns;
+};
+
 struct kioctx_table;
 struct iommu_mm_data;
 struct mm_struct {
@@ -1040,6 +1044,7 @@ struct mm_struct {
 		 * See account_mm_sched() and ...
 		 */
 		struct mm_sched __percpu *pcpu_sched;
+		struct mm_time __percpu *pcpu_time;
 		raw_spinlock_t mm_sched_lock;
 		unsigned long mm_sched_epoch;
 		int mm_sched_cpu;
@@ -1505,16 +1510,24 @@ static inline void mm_set_cpus_allowed(struct mm_struct *mm, const struct cpumas
 #endif /* CONFIG_SCHED_MM_CID */
 
 #ifdef CONFIG_SCHED_CACHE
-void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *pcpu_sched);
+void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *pcpu_sched,
+		   struct mm_time __percpu *pcpu_time);
 
 static inline int mm_alloc_sched_noprof(struct mm_struct *mm)
 {
 	struct mm_sched __percpu *pcpu_sched = alloc_percpu_noprof(struct mm_sched);
+	struct mm_time __percpu *pcpu_time;
 
 	if (!pcpu_sched)
 		return -ENOMEM;
 
-	mm_init_sched(mm, pcpu_sched);
+	pcpu_time = alloc_percpu_noprof(struct mm_time);
+	if (!pcpu_time) {
+		free_percpu(mm->pcpu_sched);
+		return -ENOMEM;
+	}
+
+	mm_init_sched(mm, pcpu_sched, pcpu_time);
 	return 0;
 }
 
@@ -1523,7 +1536,9 @@ static inline int mm_alloc_sched_noprof(struct mm_struct *mm)
 static inline void mm_destroy_sched(struct mm_struct *mm)
 {
 	free_percpu(mm->pcpu_sched);
+	free_percpu(mm->pcpu_time);
 	mm->pcpu_sched = NULL;
+	mm->pcpu_time = NULL;
 }
 #else /* !CONFIG_SCHED_CACHE */
 

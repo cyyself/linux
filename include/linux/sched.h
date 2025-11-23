@@ -2442,6 +2442,9 @@ static inline bool sched_cache_enabled(void)
 {
 	return static_branch_unlikely(&sched_cache_on);
 }
+
+int get_mm_per_llc_runtime(struct task_struct *p, u64 *buf);
+extern int max_llcs;
 #endif
 
 #endif

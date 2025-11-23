@@ -1355,16 +1355,19 @@ static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 	p->sched_llc_active = false;
 }
 
-void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched)
+void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched,
+		   struct mm_time __percpu *_pcpu_time)
 {
 	unsigned long epoch;
 	int i;
 
 	for_each_possible_cpu(i) {
 		struct mm_sched *pcpu_sched = per_cpu_ptr(_pcpu_sched, i);
+		struct mm_time *pcpu_time = per_cpu_ptr(_pcpu_time, i);
 		struct rq *rq = cpu_rq(i);
 
 		pcpu_sched->runtime = 0;
+		pcpu_time->runtime_ns = 0;
 		pcpu_sched->epoch = rq->cpu_epoch;
 		epoch = rq->cpu_epoch;
 	}
@@ -1379,6 +1382,8 @@ void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched)
 	 * the readers may get invalid mm_sched_epoch, etc.
 	 */
 	smp_store_release(&mm->pcpu_sched, _pcpu_sched);
+	/* same as above */
+	smp_store_release(&mm->pcpu_time, _pcpu_time);
 }
 
 /* because why would C be fully specified */
@@ -1428,11 +1433,39 @@ static unsigned long __no_profile fraction_mm_sched(struct rq *rq, struct mm_sch
 
 static unsigned int task_running_on_cpu(int cpu, struct task_struct *p);
 
+/* p->pi_lock is hold */
+int get_mm_per_llc_runtime(struct task_struct *p, u64 *buf)
+{
+	struct mm_struct *mm = p->mm;
+	struct mm_time *pcpu_time;
+	int cpu;
+
+	if (!mm)
+		return -EINVAL;
+
+	rcu_read_lock();
+	for_each_online_cpu(cpu) {
+		int llc = llc_id(cpu);
+		u64 runtime_ms;
+
+		if (llc < 0)
+			continue;
+
+		pcpu_time = per_cpu_ptr(mm->pcpu_time, cpu);
+		runtime_ms = div_u64(pcpu_time->runtime_ns, NSEC_PER_MSEC);
+		buf[llc] += runtime_ms;
+	}
+	rcu_read_unlock();
+
+	return 0;
+}
+
 static inline
 void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 {
 	struct mm_struct *mm = p->mm;
 	struct mm_sched *pcpu_sched;
+	struct mm_time *pcpu_time;
 	unsigned long epoch;
 	int mm_sched_llc = -1;
 
@@ -1444,14 +1477,17 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	/*
 	 * init_task and kthreads don't having mm
 	 */
-	if (!mm || !mm->pcpu_sched)
+	if (!mm || !mm->pcpu_sched || !mm->pcpu_time)
 		return;
 
 	pcpu_sched = per_cpu_ptr(p->mm->pcpu_sched, cpu_of(rq));
+	pcpu_time = per_cpu_ptr(p->mm->pcpu_time, cpu_of(rq));
 
 	scoped_guard (raw_spinlock, &rq->cpu_epoch_lock) {
 		__update_mm_sched(rq, pcpu_sched);
 		pcpu_sched->runtime += delta_exec;
+		/* pure runtime without decay */
+		pcpu_time->runtime_ns += delta_exec;
 		rq->cpu_runtime += delta_exec;
 		epoch = rq->cpu_epoch;
 	}
