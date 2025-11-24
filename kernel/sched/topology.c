@@ -24,6 +24,8 @@ int max_llcs;
 
 #ifdef CONFIG_SCHED_CACHE
 
+static bool sched_cache_present;
+
 static unsigned int *alloc_new_pref_llcs(unsigned int *old, unsigned int **gc)
 {
 	unsigned int *new = NULL;
@@ -54,7 +56,7 @@ static void populate_new_pref_llcs(unsigned int *old, unsigned int *new)
 		new[i] = old[i];
 }
 
-static int resize_llc_pref(void)
+static int resize_llc_pref(bool has_multi_llcs)
 {
 	unsigned int *__percpu *tmp_llc_pref;
 	int i, ret = 0;
@@ -102,6 +104,11 @@ static int resize_llc_pref(void)
 		rq_unlock_irqrestore(rq, &rf);
 	}
 
+	if (has_multi_llcs) {
+		sched_cache_present = true;
+		pr_info_once("Cache aware load balance is enabled on the platform.\n");
+	}
+
 release_old:
 	/*
 	 * Load balance is done under rcu_lock.
@@ -124,7 +131,7 @@ release_old:
 
 #else
 
-static int resize_llc_pref(void)
+static int resize_llc_pref(bool has_multi_llcs)
 {
 	max_llcs = new_max_llcs;
 	return 0;
@@ -2644,6 +2651,7 @@ static int
 build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *attr)
 {
 	enum s_alloc alloc_state = sa_none;
+	bool has_multi_llcs = false;
 	struct sched_domain *sd;
 	struct s_data d;
 	struct rq *rq = NULL;
@@ -2736,10 +2744,12 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 				 * between LLCs and memory channels.
 				 */
 				nr_llcs = sd->span_weight / child->span_weight;
-				if (nr_llcs == 1)
+				if (nr_llcs == 1) {
 					imb = sd->span_weight >> 3;
-				else
+				} else {
 					imb = nr_llcs;
+					has_multi_llcs = true;
+				}
 				imb = max(1U, imb);
 				sd->imb_numa_nr = imb;
 
@@ -2787,7 +2797,7 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 	if (has_cluster)
 		static_branch_inc_cpuslocked(&sched_cluster_active);
 
-	resize_llc_pref();
+	resize_llc_pref(has_multi_llcs);
 
 	if (rq && sched_debug_verbose)
 		pr_info("root domain span: %*pbl\n", cpumask_pr_args(cpu_map));
