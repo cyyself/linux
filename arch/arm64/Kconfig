@@ -2320,6 +2320,14 @@ config ARM64_MEMORY_MODEL_CONTROL
 	  for the PR_SET_MEM_MODEL/PR_GET_MEM_MODEL prctl() calls on
 	  CPUs with this feature.
 
+config ARM64_M1TSO
+	bool "Enable support for M1 TSO memory model control via sysfs"
+	depends on !ARM64_ACTLR_STATE
+	help
+	  The M1 TSO memory model is supported on Apple M1 processors.
+	  Say Y to enable support for this memory model on CPUs that
+	  implement it.
+
 config RELOCATABLE
 	bool "Build a relocatable kernel image" if EXPERT
 	select ARCH_HAS_RELR

@@ -761,6 +761,10 @@ static void actlr_thread_switch(struct task_struct *next)
 #else
 static inline void actlr_thread_switch(struct task_struct *next)
 {
+#ifdef CONFIG_ARM64_M1TSO
+	extern void m1tso_update_actlr(int is_kernel);
+	m1tso_update_actlr((next->flags & PF_KTHREAD) || next->mm == NULL);
+#endif
 }
 #endif
 
