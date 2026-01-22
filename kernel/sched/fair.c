@@ -1191,11 +1191,12 @@ static void set_next_buddy(struct sched_entity *se);
 #define EPOCH_PERIOD	(HZ / 100)	/* 10 ms */
 #define EPOCH_LLC_AFFINITY_TIMEOUT	5	/* 50 ms */
 
-__read_mostly unsigned int llc_overload_pct       = 50;
-__read_mostly unsigned int llc_imb_pct            = 20;
-__read_mostly unsigned int llc_aggr_tolerance     = 1;
-__read_mostly unsigned int llc_epoch_period       = EPOCH_PERIOD;
-__read_mostly unsigned int llc_epoch_affinity_timeout = EPOCH_LLC_AFFINITY_TIMEOUT;
+__read_mostly unsigned int llc_overload_pct		= 50;
+__read_mostly unsigned int llc_imb_pct			= 20;
+__read_mostly unsigned int llc_aggr_tolerance_nr	= 1;
+__read_mostly unsigned int llc_aggr_tolerance_size	= 1;
+__read_mostly unsigned int llc_epoch_period		= EPOCH_PERIOD;
+__read_mostly unsigned int llc_epoch_affinity_timeout	= EPOCH_LLC_AFFINITY_TIMEOUT;
 
 static int llc_id(int cpu)
 {
@@ -1212,15 +1213,26 @@ static int llc_id(int cpu)
 	return llc;
 }
 
-static inline int get_sched_cache_scale(int mul)
+static inline int get_sched_cache_scale_nr(int mul)
 {
-	if (!llc_aggr_tolerance)
+	if (!llc_aggr_tolerance_nr)
 		return 0;
 
-	if (llc_aggr_tolerance == 100)
+	if (llc_aggr_tolerance_nr == 100)
 		return INT_MAX;
 
-	return (1 + (llc_aggr_tolerance - 1) * mul);
+	return (1 + (llc_aggr_tolerance_nr - 1) * mul);
+}
+
+static inline int get_sched_cache_scale_size(int mul)
+{
+	if (!llc_aggr_tolerance_size)
+		return 0;
+
+	if (llc_aggr_tolerance_size == 100)
+		return INT_MAX;
+
+	return (1 + (llc_aggr_tolerance_size - 1) * mul);
 }
 
 static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
@@ -1253,19 +1265,19 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 		get_mm_counter(mm, MM_SHMEMPAGES);
 
 	/*
-	 * Scale the LLC size by 256*llc_aggr_tolerance
+	 * Scale the LLC size by 256*llc_aggr_tolerance_size
 	 * and compare it to the task's RSS size.
 	 *
 	 * Suppose the L3 size is 32MB. If the
-	 * llc_aggr_tolerance is 1:
+	 * llc_aggr_tolerance_size is 1:
 	 * When the RSS is larger than 32MB, the process
 	 * is regarded as exceeding the LLC capacity. If
-	 * the llc_aggr_tolerance is 99:
+	 * the llc_aggr_tolerance_size is 99:
 	 * When the RSS is larger than 784GB, the process
 	 * is regarded as exceeding the LLC capacity because:
 	 * 784GB = (1 + (99 - 1) * 256) * 32MB
 	 */
-	scale = get_sched_cache_scale(256);
+	scale = get_sched_cache_scale_size(256);
 	if (scale == INT_MAX)
 		return false;
 
@@ -1281,21 +1293,21 @@ static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
 		smt_nr = cpumask_weight(cpu_smt_mask(cpu));
 #endif
 	/*
-	 * Scale the Core number in a LLC by llc_aggr_tolerance
+	 * Scale the Core number in a LLC by llc_aggr_tolerance_nr
 	 * and compare it to the task's active threads.
 	 *
 	 * Suppose the number of Cores in LLC is 8.
 	 * Every core has 2 SMTs.
-	 * If the llc_aggr_tolerance is 1: When the
+	 * If the llc_aggr_tolerance_nr is 1: When the
 	 * nr_running is larger than 8, the process
 	 * is regarded as exceeding the LLC capacity.
-	 * If the llc_aggr_tolerance is 99:
+	 * If the llc_aggr_tolerance_nr is 99:
 	 * When the nr_running is larger than 785,
 	 * the process is regarded as exceeding
 	 * the LLC capacity:
 	 * 785 = 1 + (99 - 1) * 8
 	 */
-	scale = get_sched_cache_scale(1);
+	scale = get_sched_cache_scale_nr(1);
 	if (scale == INT_MAX)
 		return false;
 

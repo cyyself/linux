@@ -212,7 +212,8 @@ static const struct file_operations sched_cache_fops_##name = {	  \
 
 SCHED_CACHE_CREATE_CONTROL(overload_pct, 100);
 SCHED_CACHE_CREATE_CONTROL(imb_pct, 100);
-SCHED_CACHE_CREATE_CONTROL(aggr_tolerance, 100);
+SCHED_CACHE_CREATE_CONTROL(aggr_tolerance_nr, 100);
+SCHED_CACHE_CREATE_CONTROL(aggr_tolerance_size, 100);
 SCHED_CACHE_CREATE_CONTROL(enabled, 1);
 #endif /* SCHED_CACHE */
 
@@ -575,8 +576,10 @@ static __init int sched_init_debug(void)
 			    &sched_cache_fops_overload_pct);
 	debugfs_create_file("llc_imb_pct", 0644, debugfs_sched, NULL,
 			    &sched_cache_fops_imb_pct);
-	debugfs_create_file("llc_aggr_tolerance", 0644, debugfs_sched, NULL,
-			    &sched_cache_fops_aggr_tolerance);
+	debugfs_create_file("llc_aggr_tolerance_nr", 0644, debugfs_sched, NULL,
+			    &sched_cache_fops_aggr_tolerance_nr);
+	debugfs_create_file("llc_aggr_tolerance_size", 0644, debugfs_sched, NULL,
+			    &sched_cache_fops_aggr_tolerance_size);
 	debugfs_create_file("llc_enabled", 0644, debugfs_sched, NULL,
 			    &sched_cache_fops_enabled);
 	debugfs_create_u32("llc_epoch_period", 0644, debugfs_sched,
