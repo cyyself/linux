@@ -23,6 +23,7 @@ Scheduler
     sched-stats
     sched-ext
     sched-debug
+    sched-llc-aggr-tolerance
 
     text_files
 
