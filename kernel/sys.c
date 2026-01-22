@@ -2530,6 +2530,79 @@ static int prctl_set_thp_disable(bool thp_disable, unsigned long flags,
 	return 0;
 }
 
+#ifdef CONFIG_SCHED_CACHE
+static int prctl_set_sched_llc_aggr_tolerance(unsigned long option,
+					      unsigned long val,
+					      unsigned long arg4,
+					      unsigned long arg5)
+{
+	if (arg4 || arg5)
+		return -EINVAL;
+
+	if (!current->mm)
+		return -EINVAL;
+
+	switch (option) {
+	case PR_SCHED_LLC_AGGR_TOLERANCE_NR:
+		if (val > 100 && val != (unsigned long)PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT)
+			return -EINVAL;
+		WRITE_ONCE(current->mm->sc_stat.llc_aggr_tolerance_nr, (int)val);
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_SIZE:
+		if (val > 100 && val != (unsigned long)PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT)
+			return -EINVAL;
+		WRITE_ONCE(current->mm->sc_stat.llc_aggr_tolerance_size, (int)val);
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS:
+		if (val & ~PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_MASK)
+			return -EINVAL;
+		WRITE_ONCE(current->sched_llc_aggr_tolerance_inherit_nr,
+			   !!(val & PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR));
+		WRITE_ONCE(current->sched_llc_aggr_tolerance_inherit_size,
+			   !!(val & PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE));
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int prctl_get_sched_llc_aggr_tolerance(unsigned long option,
+					      unsigned long arg3,
+					      unsigned long arg4,
+					      unsigned long arg5)
+{
+	int ret;
+
+	if (arg3 || arg4 || arg5)
+		return -EINVAL;
+
+	if (!current->mm)
+		return -EINVAL;
+
+	switch (option) {
+	case PR_SCHED_LLC_AGGR_TOLERANCE_NR:
+		ret = READ_ONCE(current->mm->sc_stat.llc_aggr_tolerance_nr);
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_SIZE:
+		ret = READ_ONCE(current->mm->sc_stat.llc_aggr_tolerance_size);
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS:
+		ret = 0;
+		if (current->sched_llc_aggr_tolerance_inherit_nr)
+			ret |= PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR;
+		if (current->sched_llc_aggr_tolerance_inherit_size)
+			ret |= PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return ret;
+}
+#endif
+
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
@@ -2802,6 +2875,14 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = set_syscall_user_dispatch(arg2, arg3, arg4,
 						  (char __user *) arg5);
 		break;
+#ifdef CONFIG_SCHED_CACHE
+	case PR_GET_SCHED_LLC_AGGR_TOLERANCE:
+		error = prctl_get_sched_llc_aggr_tolerance(arg2, arg3, arg4, arg5);
+		break;
+	case PR_SET_SCHED_LLC_AGGR_TOLERANCE:
+		error = prctl_set_sched_llc_aggr_tolerance(arg2, arg3, arg4, arg5);
+		break;
+#endif
 #ifdef CONFIG_SCHED_CORE
 	case PR_SCHED_CORE:
 		error = sched_core_share_pid(arg2, arg3, arg4, arg5);

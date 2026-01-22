@@ -1409,6 +1409,8 @@ struct task_struct {
 #ifdef CONFIG_SCHED_CACHE
 	struct callback_head		cache_work;
 	int				preferred_llc;
+	bool				sched_llc_aggr_tolerance_inherit_nr;
+	bool				sched_llc_aggr_tolerance_inherit_size;
 #endif
 
 	struct rseq_data		rseq;
@@ -2395,6 +2397,8 @@ struct sched_cache_stat {
 	unsigned long epoch;
 	u64 nr_running_avg;
 	int cpu;
+	int llc_aggr_tolerance_nr;
+	int llc_aggr_tolerance_size;
 } ____cacheline_aligned_in_smp;
 
 int get_mm_per_llc_runtime(struct task_struct *p, u64 *buf);

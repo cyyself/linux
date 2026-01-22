@@ -216,6 +216,8 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 #endif
 #ifdef CONFIG_SCHED_CACHE
 	.preferred_llc  = -1,
+	.sched_llc_aggr_tolerance_inherit_nr = false,
+	.sched_llc_aggr_tolerance_inherit_size = false,
 #endif
 #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
 	.kasan_depth	= 1,

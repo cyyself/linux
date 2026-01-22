@@ -1327,26 +1327,36 @@ static inline bool valid_llc_buf(struct sched_domain *sd,
 	return valid_llc_id(id);
 }
 
-static inline int get_sched_cache_scale_nr(int mul)
+static inline int get_sched_cache_scale_nr(int mul, struct mm_struct *mm)
 {
-	if (!llc_aggr_tolerance_nr)
+	unsigned int tol = llc_aggr_tolerance_nr;
+
+	if (mm && mm->sc_stat.llc_aggr_tolerance_nr >= 0)
+		tol = mm->sc_stat.llc_aggr_tolerance_nr;
+
+	if (!tol)
 		return 0;
 
-	if (llc_aggr_tolerance_nr >= 100)
+	if (tol >= 100)
 		return INT_MAX;
 
-	return (1 + (llc_aggr_tolerance_nr - 1) * mul);
+	return (1 + (tol - 1) * mul);
 }
 
-static inline int get_sched_cache_scale_size(int mul)
+static inline int get_sched_cache_scale_size(int mul, struct mm_struct *mm)
 {
-	if (!llc_aggr_tolerance_size)
+	unsigned int tol = llc_aggr_tolerance_size;
+
+	if (mm && mm->sc_stat.llc_aggr_tolerance_size >= 0)
+		tol = mm->sc_stat.llc_aggr_tolerance_size;
+
+	if (!tol)
 		return 0;
 
-	if (llc_aggr_tolerance_size >= 100)
+	if (tol >= 100)
 		return INT_MAX;
 
-	return (1 + (llc_aggr_tolerance_size - 1) * mul);
+	return (1 + (tol - 1) * mul);
 }
 
 static bool exceed_llc_capacity(struct mm_struct *mm, int cpu,
@@ -1395,7 +1405,7 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu,
 	 * If the llc_aggr_tolerance_size is 100:
 	 * ignore the RSS.
 	 */
-	scale = get_sched_cache_scale_size(256);
+	scale = get_sched_cache_scale_size(256, mm);
 	if (scale == INT_MAX)
 		return false;
 
@@ -1421,7 +1431,7 @@ static bool exceed_llc_nr(struct mm_struct *mm, int cpu,
 	 * Scale the number of 'cores' in a LLC by llc_aggr_tolerance_nr
 	 * and compare it to the task's active threads.
 	 */
-	scale = get_sched_cache_scale_nr(1);
+	scale = get_sched_cache_scale_nr(1, mm);
 	if (scale == INT_MAX)
 		return false;
 
@@ -1485,7 +1495,7 @@ static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 	}
 }
 
-void mm_init_sched(struct mm_struct *mm,
+void mm_init_sched(struct mm_struct *mm, struct task_struct *p,
 		   struct sched_cache_time __percpu *_pcpu_sched,
 		   struct sched_cache_time __percpu *_pcpu_time)
 {
@@ -1506,6 +1516,26 @@ void mm_init_sched(struct mm_struct *mm,
 	raw_spin_lock_init(&mm->sc_stat.lock);
 	mm->sc_stat.epoch = epoch;
 	mm->sc_stat.cpu = -1;
+	mm->sc_stat.llc_aggr_tolerance_nr = -1;
+	mm->sc_stat.llc_aggr_tolerance_size = -1;
+
+	if (current->mm) {
+		int llc_tol_nr = current->mm->sc_stat.llc_aggr_tolerance_nr;
+		int llc_tol_size = current->mm->sc_stat.llc_aggr_tolerance_size;
+
+		if (p != current ||
+		    current->sched_llc_aggr_tolerance_inherit_nr) {
+			mm->sc_stat.llc_aggr_tolerance_nr = llc_tol_nr;
+			p->sched_llc_aggr_tolerance_inherit_nr =
+				current->sched_llc_aggr_tolerance_inherit_nr;
+		}
+		if (p != current ||
+		    current->sched_llc_aggr_tolerance_inherit_size) {
+			mm->sc_stat.llc_aggr_tolerance_size = llc_tol_size;
+			p->sched_llc_aggr_tolerance_inherit_size =
+				current->sched_llc_aggr_tolerance_inherit_size;
+		}
+	}
 
 	/*
 	 * The update to mm->sc_stat should not be reordered
