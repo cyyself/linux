@@ -1194,7 +1194,7 @@ static void set_next_buddy(struct sched_entity *se);
 __read_mostly unsigned int llc_overload_pct		= 50;
 __read_mostly unsigned int llc_imb_pct			= 20;
 __read_mostly unsigned int llc_aggr_tolerance_nr	= 1;
-__read_mostly unsigned int llc_aggr_tolerance_size	= 1;
+__read_mostly unsigned int llc_aggr_tolerance_size	= 2;
 __read_mostly unsigned int llc_epoch_period		= EPOCH_PERIOD;
 __read_mostly unsigned int llc_epoch_affinity_timeout	= EPOCH_LLC_AFFINITY_TIMEOUT;
 
@@ -1275,7 +1275,7 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 		get_mm_counter(mm, MM_SHMEMPAGES);
 
 	/*
-	 * Scale the LLC size by 256*llc_aggr_tolerance_size
+	 * Scale the LLC size by 1*llc_aggr_tolerance_size
 	 * and compare it to the task's RSS size.
 	 *
 	 * Suppose the L3 size is 32MB. If the
@@ -1283,11 +1283,11 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	 * When the RSS is larger than 32MB, the process
 	 * is regarded as exceeding the LLC capacity. If
 	 * the llc_aggr_tolerance_size is 99:
-	 * When the RSS is larger than 784GB, the process
+	 * When the RSS is larger than 3200MB, the process
 	 * is regarded as exceeding the LLC capacity because:
-	 * 784GB = (1 + (99 - 1) * 256) * 32MB
+	 * 3200MB = (1 + (99 - 1) * 1) * 32MB
 	 */
-	scale = get_sched_cache_scale_size(256, mm);
+	scale = get_sched_cache_scale_size(1, mm);
 	if (scale == INT_MAX)
 		return false;
 
