@@ -1259,7 +1259,7 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 			return true;
 	}
 
-	llc = ci->size;
+	llc = ci->size / PAGE_SIZE;
 
 	rss = get_mm_counter(mm, MM_ANONPAGES) +
 		get_mm_counter(mm, MM_SHMEMPAGES);
@@ -1281,7 +1281,7 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	if (scale == INT_MAX)
 		return false;
 
-	return ((llc * scale) <= (rss * PAGE_SIZE));
+	return ((1ULL * llc * scale) <= rss);
 }
 
 static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
