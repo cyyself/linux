@@ -1144,6 +1144,8 @@ struct mm_struct {
 		raw_spinlock_t mm_sched_lock;
 		unsigned long mm_sched_epoch;
 		int mm_sched_cpu;
+		int llc_aggr_tolerance_nr;
+		int llc_aggr_tolerance_size;
 		u64 nr_running_avg ____cacheline_aligned_in_smp;
 #endif
 
@@ -1542,10 +1544,12 @@ static inline unsigned int mm_cid_size(void)
 #endif /* CONFIG_SCHED_MM_CID */
 
 #ifdef CONFIG_SCHED_CACHE
-void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *pcpu_sched,
+void mm_init_sched(struct mm_struct *mm, struct task_struct *p,
+		   struct mm_sched __percpu *pcpu_sched,
 		   struct mm_time __percpu *pcpu_time);
 
-static inline int mm_alloc_sched_noprof(struct mm_struct *mm)
+static inline int mm_alloc_sched_noprof(struct mm_struct *mm,
+					struct task_struct *p)
 {
 	struct mm_sched __percpu *pcpu_sched = alloc_percpu_noprof(struct mm_sched);
 	struct mm_time __percpu *pcpu_time;
@@ -1559,7 +1563,7 @@ static inline int mm_alloc_sched_noprof(struct mm_struct *mm)
 		return -ENOMEM;
 	}
 
-	mm_init_sched(mm, pcpu_sched, pcpu_time);
+	mm_init_sched(mm, p, pcpu_sched, pcpu_time);
 	return 0;
 }
 
@@ -1574,7 +1578,7 @@ static inline void mm_destroy_sched(struct mm_struct *mm)
 }
 #else /* !CONFIG_SCHED_CACHE */
 
-static inline int mm_alloc_sched(struct mm_struct *mm) { return 0; }
+static inline int mm_alloc_sched(struct mm_struct *mm, struct task_struct *p) { return 0; }
 static inline void mm_destroy_sched(struct mm_struct *mm) { }
 
 #endif /* CONFIG_SCHED_CACHE */

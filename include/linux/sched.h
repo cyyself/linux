@@ -1414,6 +1414,8 @@ struct task_struct {
 	/*the p is currently refcounted in a rq's preferred llc stats*/
 	bool				sched_llc_active;
 	int				preferred_llc;
+	bool				sched_llc_aggr_tolerance_inherit_nr;
+	bool				sched_llc_aggr_tolerance_inherit_size;
 #endif
 
 	struct rseq_data		rseq;

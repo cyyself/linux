@@ -1213,26 +1213,36 @@ static int llc_id(int cpu)
 	return llc;
 }
 
-static inline int get_sched_cache_scale_nr(int mul)
+static inline int get_sched_cache_scale_nr(int mul, struct mm_struct *mm)
 {
-	if (!llc_aggr_tolerance_nr)
+	unsigned int tol = llc_aggr_tolerance_nr;
+
+	if (mm && mm->llc_aggr_tolerance_nr >= 0)
+		tol = mm->llc_aggr_tolerance_nr;
+
+	if (!tol)
 		return 0;
 
-	if (llc_aggr_tolerance_nr == 100)
+	if (tol == 100)
 		return INT_MAX;
 
-	return (1 + (llc_aggr_tolerance_nr - 1) * mul);
+	return (1 + (tol - 1) * mul);
 }
 
-static inline int get_sched_cache_scale_size(int mul)
+static inline int get_sched_cache_scale_size(int mul, struct mm_struct *mm)
 {
-	if (!llc_aggr_tolerance_size)
+	unsigned int tol = llc_aggr_tolerance_size;
+
+	if (mm && mm->llc_aggr_tolerance_size >= 0)
+		tol = mm->llc_aggr_tolerance_size;
+
+	if (!tol)
 		return 0;
 
-	if (llc_aggr_tolerance_size == 100)
+	if (tol == 100)
 		return INT_MAX;
 
-	return (1 + (llc_aggr_tolerance_size - 1) * mul);
+	return (1 + (tol - 1) * mul);
 }
 
 static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
@@ -1277,7 +1287,7 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	 * is regarded as exceeding the LLC capacity because:
 	 * 784GB = (1 + (99 - 1) * 256) * 32MB
 	 */
-	scale = get_sched_cache_scale_size(256);
+	scale = get_sched_cache_scale_size(256, mm);
 	if (scale == INT_MAX)
 		return false;
 
@@ -1307,7 +1317,7 @@ static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
 	 * the LLC capacity:
 	 * 785 = 1 + (99 - 1) * 8
 	 */
-	scale = get_sched_cache_scale_nr(1);
+	scale = get_sched_cache_scale_nr(1, mm);
 	if (scale == INT_MAX)
 		return false;
 
@@ -1353,7 +1363,8 @@ static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 	p->sched_llc_active = false;
 }
 
-void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched,
+void mm_init_sched(struct mm_struct *mm, struct task_struct *p,
+		   struct mm_sched __percpu *_pcpu_sched,
 		   struct mm_time __percpu *_pcpu_time)
 {
 	unsigned long epoch;
@@ -1373,6 +1384,31 @@ void mm_init_sched(struct mm_struct *mm, struct mm_sched __percpu *_pcpu_sched,
 	raw_spin_lock_init(&mm->mm_sched_lock);
 	mm->mm_sched_epoch = epoch;
 	mm->mm_sched_cpu = -1;
+	mm->llc_aggr_tolerance_nr = -1;
+	mm->llc_aggr_tolerance_size = -1;
+
+	/*
+	 * Inherit the LLC aggregation tolerance settings from the parent
+	 * process to the child process during fork or execve with
+	 * inheritance flag set.
+	 */
+	if (current->mm) {
+		int llc_tol_nr = current->mm->llc_aggr_tolerance_nr;
+		int llc_tol_size = current->mm->llc_aggr_tolerance_size;
+
+		if (p != current ||
+		    current->sched_llc_aggr_tolerance_inherit_nr) {
+			mm->llc_aggr_tolerance_nr = llc_tol_nr;
+			p->sched_llc_aggr_tolerance_inherit_nr =
+			current->sched_llc_aggr_tolerance_inherit_nr;
+		}
+		if (p != current ||
+		    current->sched_llc_aggr_tolerance_inherit_size) {
+			mm->llc_aggr_tolerance_size = llc_tol_size;
+			p->sched_llc_aggr_tolerance_inherit_size =
+			current->sched_llc_aggr_tolerance_inherit_size;
+		}
+	}
 
 	/*
 	 * The update to mm->pcpu_sched should not be reordered
