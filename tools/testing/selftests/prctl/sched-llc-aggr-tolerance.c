@@ -20,8 +20,10 @@ extern char **environ;
 # define PR_SCHED_LLC_AGGR_TOLERANCE_SIZE		1
 # define PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT		-1
 # define PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS		2
+# define PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT	3
 # define PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR	(1UL << 0)
 # define PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE	(1UL << 1)
+# define PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT	(1UL << 2)
 #endif
 
 static int llc_tol_set(unsigned long option, long val)
@@ -54,12 +56,13 @@ static bool llc_tol_supported(void)
 	return true;
 }
 
-static int exec_check(long expect_nr, long expect_size)
+static int exec_check(long expect_nr, long expect_size, long expect_overload)
 {
 	pid_t pid;
 	int status;
 	char nr_buf[32];
 	char size_buf[32];
+	char overload_buf[32];
 	char *argv[] = { (char *)"sched-llc-aggr-tolerance", NULL };
 
 	pid = fork();
@@ -68,9 +71,11 @@ static int exec_check(long expect_nr, long expect_size)
 	if (pid == 0) {
 		snprintf(nr_buf, sizeof(nr_buf), "%ld", expect_nr);
 		snprintf(size_buf, sizeof(size_buf), "%ld", expect_size);
+		snprintf(overload_buf, sizeof(overload_buf), "%ld", expect_overload);
 		setenv("LLC_EXEC_MODE", "1", 1);
 		setenv("LLC_EXEC_EXPECT_NR", nr_buf, 1);
 		setenv("LLC_EXEC_EXPECT_SIZE", size_buf, 1);
+		setenv("LLC_EXEC_EXPECT_OVERLOAD", overload_buf, 1);
 		execve("/proc/self/exe", argv, environ);
 		_exit(1);
 	}
@@ -97,16 +102,25 @@ TEST(set_get_tolerances)
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE, 13);
 	ASSERT_EQ(ret, 0);
 
+	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT, 55);
+	ASSERT_EQ(ret, 0);
+
 	ret = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_NR);
 	ASSERT_EQ(ret, 7);
 
 	ret = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE);
 	ASSERT_EQ(ret, 13);
 
+	ret = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT);
+	ASSERT_EQ(ret, 55);
+
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_NR, 101);
 	ASSERT_EQ(ret, -EINVAL);
 
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE, 101);
+	ASSERT_EQ(ret, -EINVAL);
+
+	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT, 101);
 	ASSERT_EQ(ret, -EINVAL);
 }
 
@@ -125,15 +139,20 @@ TEST(flags_and_inheritance)
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE, 11);
 	ASSERT_EQ(ret, 0);
 
+	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT, 44);
+	ASSERT_EQ(ret, 0);
+
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS,
 			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR |
-			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE);
+			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE |
+			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT);
 	ASSERT_EQ(ret, 0);
 
 	ret = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS);
 	ASSERT_EQ(ret,
 		  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR |
-		  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE);
+		  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE |
+		  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT);
 
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS, 0);
 	ASSERT_EQ(ret, 0);
@@ -146,8 +165,9 @@ TEST(flags_and_inheritance)
 	if (pid == 0) {
 		int nr = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_NR);
 		int size = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE);
+		int overload = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT);
 
-		if (nr != 9 || size != 11)
+		if (nr != 9 || size != 11 || overload != 44)
 			_exit(1);
 		_exit(0);
 	}
@@ -170,19 +190,24 @@ TEST(execve_inheritance)
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE, 22);
 	ASSERT_EQ(ret, 0);
 
+	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT, 66);
+	ASSERT_EQ(ret, 0);
+
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS, 0);
 	ASSERT_EQ(ret, 0);
 
 	ret = exec_check(PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT,
+			 PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT,
 			 PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT);
 	ASSERT_EQ(ret, 0);
 
 	ret = llc_tol_set(PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS,
 			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR |
-			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE);
+			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE |
+			  PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT);
 	ASSERT_EQ(ret, 0);
 
-	ret = exec_check(21, 22);
+	ret = exec_check(21, 22, 66);
 	ASSERT_EQ(ret, 0);
 }
 
@@ -193,10 +218,13 @@ int main(int argc, char **argv)
 	if (mode && *mode) {
 		long expect_nr = strtol(getenv("LLC_EXEC_EXPECT_NR"), NULL, 10);
 		long expect_size = strtol(getenv("LLC_EXEC_EXPECT_SIZE"), NULL, 10);
+		long expect_overload = strtol(getenv("LLC_EXEC_EXPECT_OVERLOAD"), NULL, 10);
 		int nr = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_NR);
 		int size = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_SIZE);
+		int overload = llc_tol_get(PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT);
 
-		if (nr != expect_nr || size != expect_size)
+		if (nr != expect_nr || size != expect_size ||
+		    overload != expect_overload)
 			return 1;
 		return 0;
 	}

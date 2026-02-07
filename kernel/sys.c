@@ -2544,6 +2544,17 @@ static int prctl_set_sched_llc_aggr_tolerance(unsigned long option,
 			!!(val & PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR));
 		WRITE_ONCE(current->sched_llc_aggr_tolerance_inherit_size,
 			!!(val & PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE));
+		WRITE_ONCE(current->sched_llc_overload_pct_inherit,
+			!!(val & PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT));
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT:
+		if (val > 100 &&
+		    val != PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT)
+			return -EINVAL;
+		if (val == PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT)
+			WRITE_ONCE(current->mm->llc_aggr_tolerance_overload_pct, -1);
+		else
+			WRITE_ONCE(current->mm->llc_aggr_tolerance_overload_pct, val);
 		break;
 	default:
 		return -EINVAL;
@@ -2574,6 +2585,11 @@ static int prctl_get_sched_llc_aggr_tolerance(unsigned long option,
 			ret |= PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR;
 		if (current->sched_llc_aggr_tolerance_inherit_size)
 			ret |= PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE;
+		if (current->sched_llc_overload_pct_inherit)
+			ret |= PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT;
+		break;
+	case PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT:
+		ret = READ_ONCE(current->mm->llc_aggr_tolerance_overload_pct);
 		break;
 	default:
 		return -EINVAL;

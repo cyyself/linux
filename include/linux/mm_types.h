@@ -1146,6 +1146,7 @@ struct mm_struct {
 		int mm_sched_cpu;
 		int llc_aggr_tolerance_nr;
 		int llc_aggr_tolerance_size;
+		int llc_aggr_tolerance_overload_pct;
 		u64 nr_running_avg ____cacheline_aligned_in_smp;
 #endif
 

@@ -1416,6 +1416,7 @@ struct task_struct {
 	int				preferred_llc;
 	bool				sched_llc_aggr_tolerance_inherit_nr;
 	bool				sched_llc_aggr_tolerance_inherit_size;
+	bool				sched_llc_overload_pct_inherit;
 #endif
 
 	struct rseq_data		rseq;

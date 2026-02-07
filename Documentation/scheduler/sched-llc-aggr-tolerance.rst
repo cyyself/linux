@@ -43,10 +43,13 @@ Set
 * ``PR_SCHED_LLC_AGGR_TOLERANCE_NR``
 * ``PR_SCHED_LLC_AGGR_TOLERANCE_SIZE``
 * ``PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS``
+* ``PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT``
 
-For ``PR_SCHED_LLC_AGGR_TOLERANCE_NR`` and
-``PR_SCHED_LLC_AGGR_TOLERANCE_SIZE``, ``val`` must be in the range 0..100,
-or ``PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT`` (-1) to use the system default(1).
+For ``PR_SCHED_LLC_AGGR_TOLERANCE_NR``,
+``PR_SCHED_LLC_AGGR_TOLERANCE_SIZE``, and
+``PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT``, ``val`` must be in the range
+0..100, or ``PR_SCHED_LLC_AGGR_TOLERANCE_DEFAULT`` (-1) to use the system
+default.
 
 For ``PR_SCHED_LLC_AGGR_TOLERANCE_NR``, ``val`` sets the scale of the
 number of cores in a LLC by which to compare the number of active threads
@@ -66,14 +69,21 @@ value of 99 means that when the RSS is larger than 3200MB, the process is
 regarded as exceeding the LLC capacity:
 3200MB = (1 + (99 - 1) * 1) * 32MB. When it set to 100, there is no limit on the RSS.
 
+For ``PR_SCHED_LLC_AGGR_TOLERANCE_OVERLOAD_PCT``, ``val`` sets the overload
+threshold as a percentage of LLC capacity used to decide when an LLC is
+considered busy for aggregation. A value of 50 means aggregation is allowed
+while LLC utilization is below 50% of capacity. A value of 100 disables the
+busy check.
+
 For ``PR_SCHED_LLC_AGGR_TOLERANCE_FLAGS``, ``val`` is a bitmask of:
 
 * ``PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_NR``
 * ``PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_SIZE``
+* ``PR_SCHED_LLC_AGGR_TOLERANCE_FLAG_INHERIT_OVERLOAD_PCT``
 
 If set, the corresponding tolerance value is inherited by child tasks that
-by ``execve()`` when the inherit flag is set. These two parameters will
-always inherit from the parent task at ``fork()``.
+by ``execve()`` when the inherit flag is set. These parameters will always
+inherit from the parent task at ``fork()``.
 
 Get
 ---
