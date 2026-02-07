@@ -1411,6 +1411,7 @@ struct task_struct {
 	int				preferred_llc;
 	bool				sched_llc_aggr_tolerance_inherit_nr;
 	bool				sched_llc_aggr_tolerance_inherit_size;
+	bool				sched_llc_overload_pct_inherit;
 #endif
 
 	struct rseq_data		rseq;
@@ -2399,6 +2400,7 @@ struct sched_cache_stat {
 	int cpu;
 	int llc_aggr_tolerance_nr;
 	int llc_aggr_tolerance_size;
+	int llc_aggr_tolerance_overload_pct;
 } ____cacheline_aligned_in_smp;
 
 int get_mm_per_llc_runtime(struct task_struct *p, u64 *buf);

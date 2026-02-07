@@ -1359,6 +1359,16 @@ static inline int get_sched_cache_scale_size(int mul, struct mm_struct *mm)
 	return (1 + (tol - 1) * mul);
 }
 
+static inline unsigned int get_llc_overload_pct(struct mm_struct *mm)
+{
+	unsigned int pct = llc_overaggr_pct;
+
+	if (mm && mm->sc_stat.llc_aggr_tolerance_overload_pct >= 0)
+		pct = mm->sc_stat.llc_aggr_tolerance_overload_pct;
+
+	return pct;
+}
+
 static bool exceed_llc_capacity(struct mm_struct *mm, int cpu,
 				struct task_struct *p)
 {
@@ -1518,10 +1528,13 @@ void mm_init_sched(struct mm_struct *mm, struct task_struct *p,
 	mm->sc_stat.cpu = -1;
 	mm->sc_stat.llc_aggr_tolerance_nr = -1;
 	mm->sc_stat.llc_aggr_tolerance_size = -1;
+	mm->sc_stat.llc_aggr_tolerance_overload_pct = -1;
 
 	if (current->mm) {
 		int llc_tol_nr = current->mm->sc_stat.llc_aggr_tolerance_nr;
 		int llc_tol_size = current->mm->sc_stat.llc_aggr_tolerance_size;
+		int llc_tol_overload =
+			current->mm->sc_stat.llc_aggr_tolerance_overload_pct;
 
 		if (p != current ||
 		    current->sched_llc_aggr_tolerance_inherit_nr) {
@@ -1534,6 +1547,12 @@ void mm_init_sched(struct mm_struct *mm, struct task_struct *p,
 			mm->sc_stat.llc_aggr_tolerance_size = llc_tol_size;
 			p->sched_llc_aggr_tolerance_inherit_size =
 				current->sched_llc_aggr_tolerance_inherit_size;
+		}
+		if (p != current ||
+		    current->sched_llc_overload_pct_inherit) {
+			mm->sc_stat.llc_aggr_tolerance_overload_pct = llc_tol_overload;
+			p->sched_llc_overload_pct_inherit =
+				current->sched_llc_overload_pct_inherit;
 		}
 	}
 
@@ -10115,8 +10134,8 @@ static inline int task_is_ineligible_on_dst_cpu(struct task_struct *p, int dest_
  *
  * (default: ~50%)
  */
-#define fits_llc_capacity(util, max)	\
-	((util) * 100 < (max) * llc_overaggr_pct)
+#define fits_llc_capacity(util, max, mm)	\
+	((util) * 100 < (max) * get_llc_overload_pct(mm))
 
 /*
  * The margin used when comparing utilization.
@@ -10206,7 +10225,8 @@ enum llc_mig {
  */
 static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
 				    unsigned long tsk_util,
-				    bool to_pref)
+				    bool to_pref,
+				    struct mm_struct *mm)
 {
 	unsigned long src_util, dst_util, src_cap, dst_cap;
 
@@ -10214,8 +10234,8 @@ static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
 	    !get_llc_stats(dst_cpu, &dst_util, &dst_cap))
 		return mig_unrestricted;
 
-	if (!fits_llc_capacity(dst_util, dst_cap) &&
-	    !fits_llc_capacity(src_util, src_cap))
+	if (!fits_llc_capacity(dst_util, dst_cap, mm) &&
+	    !fits_llc_capacity(src_util, src_cap, mm))
 		return mig_unrestricted;
 
 	src_util = src_util < tsk_util ? 0 : src_util - tsk_util;
@@ -10227,7 +10247,7 @@ static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
 		 * than the src, in which case migration will
 		 * increase the imbalance too much.
 		 */
-		if (!fits_llc_capacity(dst_util, dst_cap) &&
+		if (!fits_llc_capacity(dst_util, dst_cap, mm) &&
 		    util_greater(dst_util, src_util))
 			return mig_forbid;
 	} else {
@@ -10238,7 +10258,7 @@ static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
 		 * of preferred LLC, leading to migration again
 		 * back to preferred LLC.
 		 */
-		if (fits_llc_capacity(src_util, src_cap) ||
+		if (fits_llc_capacity(src_util, src_cap, mm) ||
 		    !util_greater(src_util, dst_util))
 			return mig_forbid;
 	}
@@ -10283,7 +10303,7 @@ static enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
 		return mig_unrestricted;
 
 	return can_migrate_llc(src_cpu, dst_cpu,
-			       task_util(p), to_pref);
+			       task_util(p), to_pref, mm);
 }
 
 /*
@@ -10322,7 +10342,7 @@ alb_break_llc(struct lb_env *env)
 			util = task_util(cur);
 
 		if (can_migrate_llc(env->src_cpu, env->dst_cpu,
-				    util, false) == mig_forbid)
+				    util, false, cur ? cur->mm : NULL) == mig_forbid)
 			return true;
 	}
 
@@ -10984,6 +11004,7 @@ struct sg_lb_stats {
 #endif
 #ifdef CONFIG_SCHED_CACHE
 	unsigned int nr_pref_dst_llc;
+	struct mm_struct *pref_llc_mm;
 #endif
 };
 
@@ -11458,7 +11479,7 @@ static inline bool llc_balance(struct lb_env *env, struct sg_lb_stats *sgs,
 
 	if (sgs->nr_pref_dst_llc &&
 	    can_migrate_llc(cpumask_first(sched_group_span(group)),
-			    env->dst_cpu, 0, true) == mig_llc)
+			    env->dst_cpu, 0, true, sgs->pref_llc_mm) == mig_llc)
 		return true;
 
 	return false;
@@ -11540,6 +11561,16 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 
 			if (valid_llc_buf(sd_tmp, dst_llc))
 				sgs->nr_pref_dst_llc += sd_tmp->pf[dst_llc];
+
+			if (!sgs->pref_llc_mm && dst_llc >= 0) {
+				struct task_struct *curr;
+
+				rcu_read_lock();
+				curr = rcu_dereference(rq->curr);
+				if (curr && curr->mm && curr->preferred_llc == dst_llc)
+					sgs->pref_llc_mm = curr->mm;
+				rcu_read_unlock();
+			}
 		}
 #endif
 
