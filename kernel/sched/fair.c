@@ -10625,6 +10625,9 @@ struct sg_lb_stats {
 	unsigned int nr_numa_running;
 	unsigned int nr_preferred_running;
 #endif
+#ifdef CONFIG_SCHED_CACHE
+	unsigned int nr_pref_dst_llc;
+#endif
 };
 
 /*
@@ -11093,6 +11096,9 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 {
 	int i, nr_running, local_group, sd_flags = env->sd->flags;
 	bool balancing_at_rd = !env->sd->parent;
+#ifdef CONFIG_SCHED_CACHE
+	int dst_llc = llc_id(env->dst_cpu);
+#endif
 
 	memset(sgs, 0, sizeof(*sgs));
 
@@ -11112,6 +11118,15 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 
 		if (cpu_overutilized(i))
 			*sg_overutilized = 1;
+
+#ifdef CONFIG_SCHED_CACHE
+		if (sched_cache_enabled() && llc_id(i) != dst_llc) {
+			struct sched_domain *sd_tmp = rcu_dereference(rq->sd);
+
+			if (valid_llc_buf(sd_tmp, dst_llc))
+				sgs->nr_pref_dst_llc += sd_tmp->pf[dst_llc];
+		}
+#endif
 
 		/*
 		 * No need to call idle_cpu() if nr_running is not 0
