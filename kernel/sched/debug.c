@@ -209,6 +209,46 @@ static const struct file_operations sched_scaling_fops = {
 	.release	= single_release,
 };
 
+#ifdef CONFIG_SCHED_CACHE
+static ssize_t
+sched_cache_enable_write(struct file *filp, const char __user *ubuf,
+			 size_t cnt, loff_t *ppos)
+{
+	bool val;
+	int ret;
+
+	ret = kstrtobool_from_user(ubuf, cnt, &val);
+	if (ret)
+		return ret;
+
+	sysctl_sched_cache_user = val;
+
+	sched_cache_active_set_unlocked();
+
+	return cnt;
+}
+
+static int sched_cache_enable_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", sysctl_sched_cache_user);
+	return 0;
+}
+
+static int sched_cache_enable_open(struct inode *inode,
+				   struct file *filp)
+{
+	return single_open(filp, sched_cache_enable_show, NULL);
+}
+
+static const struct file_operations sched_cache_enable_fops = {
+	.open           = sched_cache_enable_open,
+	.write          = sched_cache_enable_write,
+	.read           = seq_read,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+#endif
+
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
 static ssize_t sched_dynamic_write(struct file *filp, const char __user *ubuf,
@@ -624,6 +664,11 @@ static __init int sched_init_debug(void)
 	debugfs_create_u32("scan_size_mb", 0644, numa, &sysctl_numa_balancing_scan_size);
 	debugfs_create_u32("hot_threshold_ms", 0644, numa, &sysctl_numa_balancing_hot_threshold);
 #endif /* CONFIG_NUMA_BALANCING */
+
+#ifdef CONFIG_SCHED_CACHE
+	debugfs_create_file("llc_enabled", 0644, debugfs_sched, NULL,
+			    &sched_cache_enable_fops);
+#endif
 
 	debugfs_create_file("debug", 0444, debugfs_sched, NULL, &sched_debug_fops);
 
