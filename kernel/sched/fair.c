@@ -1337,9 +1337,11 @@ static inline int get_sched_cache_scale(int mul)
 	return (1 + (llc_aggr_tolerance - 1) * mul);
 }
 
-static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
+static bool exceed_llc_capacity(struct mm_struct *mm, int cpu,
+				struct task_struct *p)
 {
 	struct cacheinfo *ci;
+	bool exceeded;
 	u64 rss, llc;
 	int scale;
 
@@ -1385,12 +1387,18 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	if (scale == INT_MAX)
 		return false;
 
-	return ((llc * scale) <= (rss * PAGE_SIZE));
+	exceeded = ((llc * scale) <= (rss * PAGE_SIZE));
+
+	trace_sched_exceed_llc_cap(p, exceeded);
+
+	return exceeded;
 }
 
-static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
+static bool exceed_llc_nr(struct mm_struct *mm, int cpu,
+			  struct task_struct *p)
 {
 	int smt_nr = 1, scale;
+	bool exceeded;
 
 #ifdef CONFIG_SCHED_SMT
 	if (sched_smt_active())
@@ -1405,8 +1413,12 @@ static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
 	if (scale == INT_MAX)
 		return false;
 
-	return !fits_capacity((mm->sc_stat.nr_running_avg * smt_nr),
+	exceeded = !fits_capacity((mm->sc_stat.nr_running_avg * smt_nr),
 			(scale * per_cpu(sd_llc_size, cpu)));
+
+	trace_sched_exceed_llc_nr(p, exceeded);
+
+	return exceeded;
 }
 
 static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
@@ -1614,8 +1626,8 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	if (time_after(epoch,
 		       READ_ONCE(mm->sc_stat.epoch) + llc_epoch_affinity_timeout) ||
 	    get_nr_threads(p) <= 1 ||
-	    exceed_llc_nr(mm, cpu_of(rq)) ||
-	    exceed_llc_capacity(mm, cpu_of(rq))) {
+	    exceed_llc_nr(mm, cpu_of(rq), p) ||
+	    exceed_llc_capacity(mm, cpu_of(rq), p)) {
 		if (mm->sc_stat.cpu != -1)
 			mm->sc_stat.cpu = -1;
 	}
@@ -1692,7 +1704,7 @@ static void task_cache_work(struct callback_head *work)
 
 	curr_cpu = task_cpu(p);
 	if (get_nr_threads(p) <= 1 ||
-	    exceed_llc_capacity(mm, curr_cpu)) {
+	    exceed_llc_capacity(mm, curr_cpu, p)) {
 		if (mm->sc_stat.cpu != -1)
 			mm->sc_stat.cpu = -1;
 
@@ -10214,8 +10226,8 @@ static enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
 	 * Skip cache aware load balance for single/too many threads
 	 * or large memory RSS.
 	 */
-	if (get_nr_threads(p) <= 1 || exceed_llc_nr(mm, dst_cpu) ||
-	    exceed_llc_capacity(mm, dst_cpu)) {
+	if (get_nr_threads(p) <= 1 || exceed_llc_nr(mm, dst_cpu, p) ||
+	    exceed_llc_capacity(mm, dst_cpu, p)) {
 		if (mm->sc_stat.cpu != -1)
 			mm->sc_stat.cpu = -1;
 		return mig_unrestricted;
@@ -10657,6 +10669,16 @@ static void attach_task(struct rq *rq, struct task_struct *p)
 {
 	lockdep_assert_rq_held(rq);
 
+#ifdef CONFIG_SCHED_CACHE
+	if (p->mm) {
+		int pref_cpu = p->mm->sc_stat.cpu;
+
+		trace_sched_attach_task(p,
+					pref_cpu,
+					pref_cpu != -1 ? llc_id(pref_cpu) : -1,
+					cpu_of(rq), llc_id(cpu_of(rq)));
+	}
+#endif
 	WARN_ON_ONCE(task_rq(p) != rq);
 	activate_task(rq, p, ENQUEUE_NOCLOCK);
 	wakeup_preempt(rq, p, 0);
