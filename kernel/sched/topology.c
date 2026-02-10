@@ -20,6 +20,7 @@ void sched_domains_mutex_unlock(void)
 /* Protected by sched_domains_mutex: */
 static cpumask_var_t sched_domains_tmpmask;
 static cpumask_var_t sched_domains_tmpmask2;
+static int tl_max_llcs;
 
 static int __init sched_debug_setup(char *str)
 {
@@ -663,7 +664,7 @@ static void destroy_sched_domains(struct sched_domain *sd)
  */
 DEFINE_PER_CPU(struct sched_domain __rcu *, sd_llc);
 DEFINE_PER_CPU(int, sd_llc_size);
-DEFINE_PER_CPU(int, sd_llc_id);
+DEFINE_PER_CPU(int, sd_llc_id) = -1;
 DEFINE_PER_CPU(int, sd_share_id);
 DEFINE_PER_CPU(struct sched_domain_shared __rcu *, sd_llc_shared);
 DEFINE_PER_CPU(struct sched_domain __rcu *, sd_numa);
@@ -689,7 +690,6 @@ static void update_top_cache_domain(int cpu)
 
 	rcu_assign_pointer(per_cpu(sd_llc, cpu), sd);
 	per_cpu(sd_llc_size, cpu) = size;
-	per_cpu(sd_llc_id, cpu) = id;
 	rcu_assign_pointer(per_cpu(sd_llc_shared, cpu), sds);
 
 	sd = lowest_flag_domain(cpu, SD_CLUSTER);
@@ -2572,10 +2572,18 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 
 	/* Set up domains for CPUs specified by the cpu_map: */
 	for_each_cpu(i, cpu_map) {
-		struct sched_domain_topology_level *tl;
+		struct sched_domain_topology_level *tl, *tl_llc = NULL;
+		int lid;
 
 		sd = NULL;
 		for_each_sd_topology(tl) {
+			int flags = 0;
+
+			if (tl->sd_flags)
+				flags = (*tl->sd_flags)();
+
+			if (flags & SD_SHARE_LLC)
+				tl_llc = tl;
 
 			sd = build_sched_domain(tl, cpu_map, attr, sd, i);
 
@@ -2585,6 +2593,39 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 				*per_cpu_ptr(d.sd, i) = sd;
 			if (cpumask_equal(cpu_map, sched_domain_span(sd)))
 				break;
+		}
+
+		lid = per_cpu(sd_llc_id, i);
+		if (lid == -1) {
+			int j;
+
+			/*
+			 * Assign the llc_id to the CPUs that do not
+			 * have an LLC.
+			 */
+			if (!tl_llc) {
+				per_cpu(sd_llc_id, i) = tl_max_llcs++;
+
+				continue;
+			}
+
+			/* try to reuse the llc_id of its siblings */
+			for_each_cpu(j, tl_llc->mask(tl_llc, i)) {
+				if (i == j)
+					continue;
+
+				lid = per_cpu(sd_llc_id, j);
+
+				if (lid != -1) {
+					per_cpu(sd_llc_id, i) = lid;
+
+					break;
+				}
+			}
+
+			/* a new LLC is detected */
+			if (lid == -1)
+				per_cpu(sd_llc_id, i) = tl_max_llcs++;
 		}
 	}
 
