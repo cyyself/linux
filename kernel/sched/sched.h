@@ -1132,6 +1132,10 @@ struct rq {
 	unsigned int		nr_numa_running;
 	unsigned int		nr_preferred_running;
 #endif
+#ifdef CONFIG_SCHED_CACHE
+	unsigned int		nr_pref_llc_running;
+	unsigned int		nr_llc_running;
+#endif
 	unsigned int		ttwu_pending;
 	unsigned long		cpu_capacity;
 #ifdef CONFIG_SCHED_PROXY_EXEC
@@ -2065,6 +2069,8 @@ init_numa_balancing(u64 clone_flags, struct task_struct *p)
 }
 
 #endif /* !CONFIG_NUMA_BALANCING */
+
+int task_llc(const struct task_struct *p);
 
 static inline void
 queue_balance_callback(struct rq *rq,
