@@ -21,6 +21,7 @@ void sched_domains_mutex_unlock(void)
 static cpumask_var_t sched_domains_tmpmask;
 static cpumask_var_t sched_domains_tmpmask2;
 static int tl_max_llcs;
+int max_llcs;
 
 static int __init sched_debug_setup(char *str)
 {
@@ -633,6 +634,11 @@ static void destroy_sched_domain(struct sched_domain *sd)
 
 	if (sd->shared && atomic_dec_and_test(&sd->shared->ref))
 		kfree(sd->shared);
+
+#ifdef CONFIG_SCHED_CACHE
+	/* only the bottom sd has pref_llc array */
+	kfree(sd->pf);
+#endif
 	kfree(sd);
 }
 
@@ -752,10 +758,15 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 	if (sd && sd_degenerate(sd)) {
 		tmp = sd;
 		sd = sd->parent;
-		destroy_sched_domain(tmp);
+
 		if (sd) {
 			struct sched_group *sg = sd->groups;
 
+#ifdef CONFIG_SCHED_CACHE
+			/* move pf to parent as child is being destroyed */
+			sd->pf = tmp->pf;
+			tmp->pf = NULL;
+#endif
 			/*
 			 * sched groups hold the flags of the child sched
 			 * domain for convenience. Clear such flags since
@@ -767,6 +778,8 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 
 			sd->child = NULL;
 		}
+
+		destroy_sched_domain(tmp);
 	}
 
 	sched_domain_debug(sd, cpu);
@@ -791,6 +804,46 @@ enum s_alloc {
 	sa_sd_storage,
 	sa_none,
 };
+
+#ifdef CONFIG_SCHED_CACHE
+static bool alloc_sd_pref(const struct cpumask *cpu_map,
+			  struct s_data *d)
+{
+	struct sched_domain *sd;
+	unsigned int *pf;
+	int i;
+
+	for_each_cpu(i, cpu_map) {
+		sd = *per_cpu_ptr(d->sd, i);
+		if (!sd)
+			goto err;
+
+		pf = kcalloc(tl_max_llcs, sizeof(unsigned int), GFP_KERNEL);
+		if (!pf)
+			goto err;
+
+		sd->pf = pf;
+	}
+
+	return true;
+err:
+	for_each_cpu(i, cpu_map) {
+		sd = *per_cpu_ptr(d->sd, i);
+		if (sd) {
+			kfree(sd->pf);
+			sd->pf = NULL;
+		}
+	}
+
+	return false;
+}
+#else
+static bool alloc_sd_pref(const struct cpumask *cpu_map,
+			  struct s_data *d)
+{
+	return false;
+}
+#endif
 
 /*
  * Return the canonical balance CPU for this group, this is the first CPU
@@ -2715,6 +2768,8 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 		}
 	}
 
+	alloc_sd_pref(cpu_map, &d);
+
 	/* Attach the domains */
 	rcu_read_lock();
 	for_each_cpu(i, cpu_map) {
@@ -2727,6 +2782,13 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 			has_cluster = true;
 	}
 	rcu_read_unlock();
+
+	/*
+	 * Ensure we see enlarged sd->pf when we use new llc_ids and
+	 * bigger max_llcs.
+	 */
+	smp_mb();
+	max_llcs = tl_max_llcs;
 
 	if (has_asym)
 		static_branch_inc_cpuslocked(&sched_asym_cpucapacity);
