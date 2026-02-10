@@ -1291,28 +1291,80 @@ static int llc_id(int cpu)
 	return per_cpu(sd_llc_id, cpu);
 }
 
+static inline bool valid_llc_id(int id)
+{
+	if (unlikely(id < 0 || id >= max_llcs))
+		return false;
+
+	return true;
+}
+
+static inline bool valid_llc_buf(struct sched_domain *sd,
+				 int id)
+{
+	/*
+	 * The check for sd and its corresponding pf is to
+	 * confirm that the sd->pf[] has been allocated in
+	 * build_sched_domains() after the assignment of
+	 * per_cpu(sd_llc_id, i). This is used to avoid
+	 * the race condition.
+	 */
+	if (unlikely(!sd || !sd->pf))
+		return false;
+
+	return valid_llc_id(id);
+}
+
 static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
 {
+	struct sched_domain *sd;
 	int pref_llc;
 
 	pref_llc = p->preferred_llc;
-	if (pref_llc < 0)
+	if (!valid_llc_id(pref_llc))
 		return;
 
 	rq->nr_llc_running++;
 	rq->nr_pref_llc_running += (pref_llc == task_llc(p));
+
+	scoped_guard (rcu) {
+		sd = rcu_dereference(rq->sd);
+		if (valid_llc_buf(sd, pref_llc))
+			sd->pf[pref_llc]++;
+	}
 }
 
 static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 {
+	struct sched_domain *sd;
 	int pref_llc;
 
 	pref_llc = p->preferred_llc;
-	if (pref_llc < 0)
+	if (!valid_llc_id(pref_llc))
 		return;
 
 	rq->nr_llc_running--;
 	rq->nr_pref_llc_running -= (pref_llc == task_llc(p));
+
+	scoped_guard (rcu) {
+		sd = rcu_dereference(rq->sd);
+		if (valid_llc_buf(sd, pref_llc)) {
+			/*
+			 * There is a race condition between dequeue
+			 * and CPU hotplug. After a task has been enqueued
+			 * on CPUx, a CPU hotplug event occurs, and all online
+			 * CPUs (including CPUx) rebuild their sched_domains
+			 * and reset statistics to zero (including sd->pf).
+			 * This can cause temporary undercount and we have to
+			 * check for such underflow in sd->pf.
+			 *
+			 * This undercount is temporary and accurate accounting
+			 * will resume once the rq has a chance to be idle.
+			 */
+			if (sd->pf[pref_llc])
+				sd->pf[pref_llc]--;
+		}
+	}
 }
 
 void mm_init_sched(struct mm_struct *mm,
