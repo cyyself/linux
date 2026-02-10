@@ -1283,6 +1283,12 @@ static void set_next_buddy(struct sched_entity *se);
 #define EPOCH_PERIOD	(HZ / 100)	/* 10 ms */
 #define EPOCH_LLC_AFFINITY_TIMEOUT	5	/* 50 ms */
 
+__read_mostly unsigned int llc_aggr_tolerance     = 1;
+__read_mostly unsigned int llc_epoch_period       = EPOCH_PERIOD;
+__read_mostly unsigned int llc_epoch_affinity_timeout = EPOCH_LLC_AFFINITY_TIMEOUT;
+__read_mostly unsigned int llc_imb_pct     = 20;
+__read_mostly unsigned int llc_overaggr_pct     = 50;
+
 static int llc_id(int cpu)
 {
 	if (cpu < 0)
@@ -1315,10 +1321,22 @@ static inline bool valid_llc_buf(struct sched_domain *sd,
 	return valid_llc_id(id);
 }
 
+static inline int get_sched_cache_scale(int mul)
+{
+	if (!llc_aggr_tolerance)
+		return 0;
+
+	if (llc_aggr_tolerance >= 100)
+		return INT_MAX;
+
+	return (1 + (llc_aggr_tolerance - 1) * mul);
+}
+
 static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 {
 	struct cacheinfo *ci;
 	u64 rss, llc;
+	int scale;
 
 	/*
 	 * get_cpu_cacheinfo_level() can not be used
@@ -1343,20 +1361,47 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	rss = get_mm_counter(mm, MM_ANONPAGES) +
 		get_mm_counter(mm, MM_SHMEMPAGES);
 
-	return (llc <= (rss * PAGE_SIZE));
+	/*
+	 * Scale the LLC size by 256*llc_aggr_tolerance
+	 * and compare it to the task's RSS size.
+	 *
+	 * Suppose the L3 size is 32MB. If the
+	 * llc_aggr_tolerance is 1:
+	 * When the RSS is larger than 32MB, the process
+	 * is regarded as exceeding the LLC capacity. If
+	 * the llc_aggr_tolerance is 99:
+	 * When the RSS is larger than 784GB, the process
+	 * is regarded as exceeding the LLC capacity:
+	 * 784GB = (1 + (99 - 1) * 256) * 32MB
+	 * If the llc_aggr_tolerance is 100:
+	 * ignore the RSS.
+	 */
+	scale = get_sched_cache_scale(256);
+	if (scale == INT_MAX)
+		return false;
+
+	return ((llc * scale) <= (rss * PAGE_SIZE));
 }
 
 static bool exceed_llc_nr(struct mm_struct *mm, int cpu)
 {
-	int smt_nr = 1;
+	int smt_nr = 1, scale;
 
 #ifdef CONFIG_SCHED_SMT
 	if (sched_smt_active())
 		smt_nr = cpumask_weight(cpu_smt_mask(cpu));
 #endif
 
+	/*
+	 * Scale the number of 'cores' in a LLC by llc_aggr_tolerance
+	 * and compare it to the task's active threads.
+	 */
+	scale = get_sched_cache_scale(1);
+	if (scale == INT_MAX)
+		return false;
+
 	return !fits_capacity((mm->sc_stat.nr_running_avg * smt_nr),
-			per_cpu(sd_llc_size, cpu));
+			(scale * per_cpu(sd_llc_size, cpu)));
 }
 
 static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
@@ -1457,7 +1502,7 @@ static inline void __update_mm_sched(struct rq *rq,
 	long delta = now - rq->cpu_epoch_next;
 
 	if (delta > 0) {
-		n = (delta + EPOCH_PERIOD - 1) / EPOCH_PERIOD;
+		n = (delta + llc_epoch_period - 1) / llc_epoch_period;
 		rq->cpu_epoch += n;
 		rq->cpu_epoch_next += n * EPOCH_PERIOD;
 		__shr_u64(&rq->cpu_runtime, n);
@@ -1552,7 +1597,7 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	 * has only 1 thread, invalidate its preferred state.
 	 */
 	if (time_after(epoch,
-		       READ_ONCE(mm->sc_stat.epoch) + EPOCH_LLC_AFFINITY_TIMEOUT) ||
+		       READ_ONCE(mm->sc_stat.epoch) + llc_epoch_affinity_timeout) ||
 	    get_nr_threads(p) <= 1 ||
 	    exceed_llc_nr(mm, cpu_of(rq)) ||
 	    exceed_llc_capacity(mm, cpu_of(rq))) {
@@ -9975,7 +10020,7 @@ static inline int task_is_ineligible_on_dst_cpu(struct task_struct *p, int dest_
  * (default: ~50%)
  */
 #define fits_llc_capacity(util, max)	\
-	((util) * 2 < (max))
+	((util) * 100 < (max) * llc_overaggr_pct)
 
 /*
  * The margin used when comparing utilization.
@@ -9985,7 +10030,7 @@ static inline int task_is_ineligible_on_dst_cpu(struct task_struct *p, int dest_
  */
 /* Allows dst util to be bigger than src util by up to bias percent */
 #define util_greater(util1, util2) \
-	((util1) * 100 > (util2) * 120)
+	((util1) * 100 > (util2) * (100 + llc_imb_pct))
 
 /* Called from load balancing paths with rcu_read_lock held */
 static __maybe_unused bool get_llc_stats(int cpu, unsigned long *util,
